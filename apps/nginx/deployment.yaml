@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      # Pin to the always-on control-plane node. Adjust the hostname to match
+      # `kubectl get nodes` output for your M910q.
+      nodeSelector:
+        kubernetes.io/hostname: deus
+      containers:
+        - name: nginx
+          image: ghcr.io/barneyLaw/nginx-app:latest  # tag rewritten by CI
+          ports:
+            - containerPort: 80
