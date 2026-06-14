@@ -2,8 +2,9 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: nginx
 resources:
-  - deployment.yaml
-  - service.yaml
+- deployment.yaml
+- service.yaml
 images:
-  - name: ghcr.io/barneylaw/nginx-app
-    newTag: latest   # CI overwrites this line via `kustomize edit set image`
+- name: ghcr.io/barneylaw/nginx-app
+  newName: ghcr.io/barneylaw/nginx-app
+  newTag: 5d1d57e
