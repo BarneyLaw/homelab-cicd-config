@@ -25,22 +25,24 @@ spec:
       # Soft rule: prefer nebula (more RAM headroom for compile/AI work),
       #   fall back to deus. The scheduler picks at schedule time based on
       #   resource requests + this preference — that's the "dynamic" part.
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: kubernetes.io/hostname
-                    operator: In
-                    values: ["deus", "nebula"]
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              preference:
-                matchExpressions:
-                  - key: kubernetes.io/hostname
-                    operator: In
-                    values: ["nebula"]
-
+      # affinity:
+      #   nodeAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #       nodeSelectorTerms:
+      #         - matchExpressions:
+      #             - key: kubernetes.io/hostname
+      #               operator: In
+      #               values: ["deus", "nebula"]
+      #     preferredDuringSchedulingIgnoredDuringExecution:
+      #       - weight: 100
+      #         preference:
+      #           matchExpressions:
+      #             - key: kubernetes.io/hostname
+      #               operator: In
+      #               values: ["nebula"]
+      nodeSelector:
+        kubernetes.io/hostname: nebula  # temporarily pin to nebula until we have a better solution for the sleep eviction issue
+  
       # --- POD HARDENING (AI sandbox) -----------------------------------
       securityContext:
         runAsNonRoot: true
@@ -99,7 +101,9 @@ spec:
             - name: workspace
               mountPath: /home/dev/workspace
             - name: tunnel-auth
-              mountPath: /home/dev/.vscode-cli
+              mountPath: /home/dev/.vscode/cli
+            - name: codex-auth
+              mountPath: /home/dev/.codex
 
       volumes:
         # EPHEMERAL workspace — dies on pod restart (resets blast radius).
@@ -111,3 +115,6 @@ spec:
         - name: tunnel-auth
           persistentVolumeClaim:
             claimName: code-server-tunnel-auth
+        - name: codex-auth
+          persistentVolumeClaim:
+            claimName: code-server-codex-auth

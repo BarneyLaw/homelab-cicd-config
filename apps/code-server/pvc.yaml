@@ -33,3 +33,16 @@ spec:
   resources:
     requests:
       storage: 64Mi
+
+# Separate PVC for codex login persistance
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: code-server-codex-auth
+  namespace: code-server
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 64Mi
