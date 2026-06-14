@@ -5,5 +5,5 @@ resources:
   - deployment.yaml
   - service.yaml
 images:
-  - name: ghcr.io/barneyLaw/nginx-app
+  - name: ghcr.io/barneylaw/nginx-app
     newTag: latest   # CI overwrites this line via `kustomize edit set image`
