@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: code-server
+resources:
+  - namespace.yaml
+  - pvc.yaml
+  - networkpolicy.yaml
+  - deployment.yaml
+images:
+  # CI overwrites newTag via `kustomize edit set image`.
+  # NOTE: <owner-lowercase> must match the built image EXACTLY (case-sensitive)
+  # or the tag silently never updates — same gotcha as your nginx app.
+  - name: ghcr.io/barneylaw/code-server-app
+    newTag: latest

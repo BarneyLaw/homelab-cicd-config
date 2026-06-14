@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-server
+  namespace: code-server
+  labels:
+    app: code-server
+spec:
+  replicas: 1
+  # Recreate (not RollingUpdate): only one dev pod should exist, and a stable
+  # tunnel name can't be held by two pods at once.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: code-server
+  template:
+    metadata:
+      labels:
+        app: code-server
+    spec:
+      # --- DYNAMIC PLACEMENT --------------------------------------------
+      # Hard rule: schedulable only on deus OR nebula (NOT legion — it's
+      #   transient and would evict your editor when it sleeps).
+      # Soft rule: prefer nebula (more RAM headroom for compile/AI work),
+      #   fall back to deus. The scheduler picks at schedule time based on
+      #   resource requests + this preference — that's the "dynamic" part.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: ["deus", "nebula"]
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: ["nebula"]
+
+      # --- POD HARDENING (AI sandbox) -----------------------------------
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
+      # init container clones the workspace from git so the pod is ready
+      # the moment it lands on a node. emptyDir means no PVC = free placement.
+      initContainers:
+        - name: clone-workspace
+          image: ghcr.io/barneylaw/code-server-app:latest  # tag rewritten by CI
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              if [ -n "$REPO_URL" ] && [ -z "$(ls -A /workspace 2>/dev/null)" ]; then
+                echo "cloning $REPO_URL ($REPO_BRANCH)"
+                git clone --branch "$REPO_BRANCH" --depth 1 "$REPO_URL" /workspace || \
+                  echo "clone failed — starting empty"
+              fi
+          env:
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+
+      containers:
+        - name: code-server
+          image: ghcr.io/barneylaw/code-server-app:latest  # tag rewritten by CI
+          env:
+            - name: WORKSPACE
+              value: "/home/dev/workspace"
+            - name: TUNNEL_NAME
+              value: "homelab-dev"
+          # Honest requests: this is what the scheduler uses to place the pod.
+          # Limits are hard ceilings so a runaway AI process can't OOM the node.
+          resources:
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+            limits:
+              cpu: "4"
+              memory: "6Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: workspace
+              mountPath: /home/dev/workspace
+            - name: tunnel-auth
+              mountPath: /home/dev/.vscode-cli
+
+      volumes:
+        # EPHEMERAL workspace — dies on pod restart (resets blast radius).
+        - name: workspace
+          emptyDir: {}
+        # Tiny persisted auth so reschedules don't force a fresh device-login.
+        # See guide §6 for the stateless-vs-convenient tradeoff and the
+        # fully-ephemeral alternative (just delete this volume + mount).
+        - name: tunnel-auth
+          persistentVolumeClaim:
+            claimName: code-server-tunnel-auth

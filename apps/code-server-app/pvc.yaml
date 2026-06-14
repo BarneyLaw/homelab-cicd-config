@@ -1,0 +1,35 @@
+# Tiny PVC holding ONLY the `code tunnel` auth token (~KB), so a rescheduled
+# pod reuses its tunnel identity instead of forcing a fresh GitHub device-login.
+#
+# ⚠️ PLACEMENT CAVEAT (read this — it's the one wrinkle in "dynamic"):
+# K3s `local-path` provisioner binds the volume to the node where it's first
+# created. Because this PVC is mounted by the pod, once the pod lands on a node
+# (say nebula) and the volume is created there, every SUBSEQUENT reschedule is
+# pinned back to nebula — local-path can't move the data. So this PVC trades
+# some placement freedom for login convenience.
+#
+# THREE WAYS TO HANDLE THIS, pick per your priority:
+#   (A) Keep this PVC. First schedule is dynamic (deus/nebula by load); after
+#       that the pod sticks to wherever the volume lives. Re-attaching is
+#       seamless (no re-login). Good if you mostly want convenience.
+#   (B) Delete this PVC + the tunnel-auth volume/mount in deployment.yaml.
+#       Fully stateless → placement is dynamic on EVERY restart, but you
+#       re-run the GitHub device-login (one URL in `kubectl logs`) each time
+#       the pod cycles. Good if dynamic placement matters more than convenience.
+#   (C) Wait for Longhorn (NAS-gated). A Longhorn-backed PVC is replicated and
+#       node-independent, giving BOTH persisted auth AND free placement. This
+#       is the "correct" long-term answer once your drives arrive.
+#
+# Default below = (A). To switch to (B), delete this file, remove it from
+# kustomization.yaml, and drop the tunnel-auth volume+mount from deployment.yaml.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: code-server-tunnel-auth
+  namespace: code-server
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 64Mi

@@ -1,0 +1,65 @@
+# Egress containment for the dev pod (option "a" from our discussion).
+#
+# WHAT THIS ENFORCES (kube-router, active on your stock K3s):
+#   ✅ DNS resolution (needed for everything)
+#   ✅ Talk to the K8s API + other cluster pods (cluster CIDR 10.42/16, svc 10.43/16)
+#   ✅ Reach the public internet on 443/80 — REQUIRED because `code tunnel`
+#      phones home to Microsoft's tunnel relay, and git clone pulls over HTTPS
+#   ❌ Reach your LAN (192.168.0.0/16) — the AI cannot touch deus/nebula/legion
+#      management, your router, NAS admin, other home devices. THIS is the
+#      core containment win NetworkPolicy gives you here.
+#   ❌ Reach link-local / cloud metadata (169.254.0.0/16)
+#
+# HONEST LIMITATION: this is IP/CIDR-based, so "internet on 443" means ALL
+# internet on 443, not a domain allowlist. NetworkPolicy fundamentally can't
+# allowlist by domain (github.com resolves to rotating CDN IPs). To get a true
+# domain allowlist like your bash sandbox, that's the egress-proxy follow-up
+# (guide §8) — run everything through a Squid/proxy with HTTP_PROXY env +
+# block direct 443 here. We're doing the LAN-isolation now, domain-allowlist later.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: code-server-egress
+  namespace: code-server
+spec:
+  podSelector:
+    matchLabels:
+      app: code-server
+  policyTypes:
+    - Egress
+  egress:
+    # 1. DNS to kube-dns (CoreDNS) — both UDP and TCP
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # 2. Intra-cluster: pods (10.42/16) and services (10.43/16)
+    - to:
+        - ipBlock:
+            cidr: 10.42.0.0/16
+        - ipBlock:
+            cidr: 10.43.0.0/16
+
+    # 3. Public internet on HTTPS/HTTP, but EXCLUDING private + link-local
+    #    ranges. This is what lets the tunnel + git out while keeping the
+    #    AI off your home network.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16     # your LAN — blocked
+              - 169.254.0.0/16     # link-local / metadata — blocked
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
