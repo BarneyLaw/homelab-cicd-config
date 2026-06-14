@@ -1,11 +1,10 @@
-apiVersion: v1
-kind: Service
-metadata:
-  name: nginx
-  namespace: nginx
-spec:
-  selector:
-    app: nginx
-  ports:
-    - port: 80
-      targetPort: 80
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: nginx
+resources:
+- deployment.yaml
+- service.yaml
+images:
+- name: ghcr.io/barneylaw/nginx-app
+  newName: ghcr.io/barneylaw/nginx-app
+  newTag: 714f68b
