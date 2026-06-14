@@ -11,4 +11,4 @@ resources:
 images:
 - name: ghcr.io/barneylaw/code-server-app
   newName: ghcr.io/barneylaw/code-server-app
-  newTag: a38a6e4
+  newTag: fbb723e
