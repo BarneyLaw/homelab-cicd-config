@@ -7,4 +7,4 @@ resources:
 images:
 - name: ghcr.io/barneylaw/nginx-app
   newName: ghcr.io/barneylaw/nginx-app
-  newTag: 5d1d57e
+  newTag: 714f68b
