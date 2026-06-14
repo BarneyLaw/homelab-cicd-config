@@ -9,6 +9,5 @@ resources:
 images:
   # CI overwrites newTag via `kustomize edit set image`.
   # NOTE: <owner-lowercase> must match the built image EXACTLY (case-sensitive)
-  # or the tag silently never updates — same gotcha as your nginx app.
   - name: ghcr.io/barneylaw/code-server-app
     newTag: latest

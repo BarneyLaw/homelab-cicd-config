@@ -7,8 +7,8 @@ spec:
   project: default
   source:
     repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
-    targetRevision: master
-    path: apps/code-server-app
+    targetRevision: main
+    path: apps/code-server
   destination:
     server: https://kubernetes.default.svc
     namespace: code-server
