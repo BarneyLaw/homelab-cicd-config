@@ -2,12 +2,13 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: code-server
 resources:
-  - namespace.yaml
-  - pvc.yaml
-  - networkpolicy.yaml
-  - deployment.yaml
-images:
+- namespace.yaml
+- pvc.yaml
+- networkpolicy.yaml
+- deployment.yaml
   # CI overwrites newTag via `kustomize edit set image`.
   # NOTE: <owner-lowercase> must match the built image EXACTLY (case-sensitive)
-  - name: ghcr.io/barneylaw/code-server-app
-    newTag: latest
+images:
+- name: ghcr.io/barneylaw/code-server-app
+  newName: ghcr.io/barneylaw/code-server-app
+  newTag: a38a6e4
