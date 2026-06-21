@@ -84,6 +84,12 @@ spec:
               value: "/home/dev/workspace"
             - name: TUNNEL_NAME
               value: "homelab-dev"
+            - name: GITHUB_PAT_FILE
+              value: /var/run/secrets/devbox/github-pat
+            - name: GIT_AUTHOR_NAME
+              value: BarneyLaw
+            - name: GIT_AUTHOR_EMAIL
+              value: leifsenlaw993@gmail.com
           # Honest requests: this is what the scheduler uses to place the pod.
           # Limits are hard ceilings so a runaway AI process can't OOM the node.
           resources:
@@ -92,7 +98,7 @@ spec:
               memory: "2Gi"
             limits:
               cpu: "4"
-              memory: "6Gi"
+              memory: "8Gi"
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -104,6 +110,9 @@ spec:
               mountPath: /home/dev/.vscode/cli
             - name: codex-auth
               mountPath: /home/dev/.codex
+            - mountPath: /var/run/secrets/devbox
+              name: github-pat
+              readOnly: true
 
       volumes:
         # EPHEMERAL workspace — dies on pod restart (resets blast radius).
@@ -118,3 +127,9 @@ spec:
         - name: codex-auth
           persistentVolumeClaim:
             claimName: code-server-codex-auth
+        - name: github-pat
+          secret:
+            secretName: code-server-github-pat
+            items:
+              - key: github-pat
+                path: github-pat
