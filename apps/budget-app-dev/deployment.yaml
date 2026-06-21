@@ -52,7 +52,7 @@ spec:
         # Populate the ephemeral workspace from git before the tunnel starts.
         # Uses the scoped PAT (mounted below) so private clones work.
         - name: clone-workspace
-          image: ghcr.io/barneylaw/devbox-flutter:latest
+          image: ghcr.io/barneylaw/code-server-app:latest
           imagePullPolicy: IfNotPresent
           command: ["/bin/bash", "-c"]
           args:
@@ -86,7 +86,7 @@ spec:
             - { name: github-pat, mountPath: /var/run/secrets/devbox, readOnly: true }
       containers:
         - name: devbox
-          image: ghcr.io/barneylaw/devbox-flutter:latest  # tag set by CI
+          image: ghcr.io/barneylaw/code-server-app:latest  # tag set by CI
           imagePullPolicy: IfNotPresent
           env:
             - name: WORKSPACE

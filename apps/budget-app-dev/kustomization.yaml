@@ -7,5 +7,5 @@ resources:
 images:
   # CI rewrites newTag for whichever toolchain this project uses.
   # Name must match exactly (case-sensitive) what CI pushes, lowercased owner.
-  - name: ghcr.io/barneylaw/devbox-flutter
+  - name: ghcr.io/barneylaw/code-server-app
     newTag: latest
