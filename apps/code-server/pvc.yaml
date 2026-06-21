@@ -33,7 +33,7 @@ spec:
   resources:
     requests:
       storage: 64Mi
-
+---
 # Separate PVC for codex login persistance
 apiVersion: v1
 kind: PersistentVolumeClaim
