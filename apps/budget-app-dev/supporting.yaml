@@ -1,0 +1,63 @@
+# =============================================================================
+# TEMPLATE: supporting manifests for a per-project dev environment.
+# Copy alongside deployment.yaml; replace the same placeholders.
+# Bundles namespace + PVCs + egress NetworkPolicy.
+#   budget-app  short project name (must match deployment.yaml)
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: budget-app-dev
+---
+# Tunnel keyring (~/.vscode/cli) — one device-login persists across restarts.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: budget-app-tunnel-auth
+  namespace: budget-app-dev
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 64Mi
+---
+# Codex creds (~/.codex) — transplanted auth.json persists here.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: budget-app-codex-auth
+  namespace: budget-app-dev
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 64Mi
+---
+# Egress containment: allow DNS + internet (git/ghcr/agent APIs) + intra-cluster,
+# deny the home LAN so a misbehaving agent can't move laterally into the network.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: budget-app-egress
+  namespace: budget-app-dev
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: []
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.0.0/16
+              - 192.168.0.0/16
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+    - to:
+        - ipBlock: { cidr: 10.42.0.0/16 }   # pod CIDR
+        - ipBlock: { cidr: 10.43.0.0/16 }   # service CIDR

@@ -1,0 +1,131 @@
+# =============================================================================
+# TEMPLATE: per-project dev-container Deployment
+# -----------------------------------------------------------------------------
+# This is the LIVE code-server deployment, generalized. One container = one
+# project environment. Copy this folder to:
+#     homelab-cicd-config/apps/budget-app-dev/
+# and replace every placeholder:
+#
+#   budget-app      short project name, e.g. flutter-budget, obsync, proxy-lab
+#   flutter    image variant: base | go | node | flutter
+#   barneylaw     GitHub username, lowercased  (BarneyLaw -> barneylaw)
+#   https://github.com/BarneyLaw/home-budget-app.git     https clone URL of THIS project's repo
+#   main  branch to clone (usually main)
+#   flutter-budget-dev  globally-unique tunnel name on your GitHub account
+#
+# Per-project credential (the security model): a fine-grained PAT scoped to
+# ONLY this project's repo, created out-of-band as Secret budget-app-github-pat.
+# The container can reach its own repo and NOTHING else on your account.
+#
+# Storage: local-path PVCs are node-bound, so the pod is pinned to nebula
+# (same as the live box). Longhorn later frees placement.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: budget-app-dev
+  namespace: budget-app-dev
+  labels:
+    app: budget-app-dev
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate          # single-writer workspace; never two pods at once
+  selector:
+    matchLabels:
+      app: budget-app-dev
+  template:
+    metadata:
+      labels:
+        app: budget-app-dev
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: nebula
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Populate the ephemeral workspace from git before the tunnel starts.
+        # Uses the scoped PAT (mounted below) so private clones work.
+        - name: clone-workspace
+          image: ghcr.io/barneylaw/devbox-flutter:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              if [ -n "$REPO_URL" ] && [ -z "$(ls -A /workspace 2>/dev/null)" ]; then
+                if [ -s "$GITHUB_PAT_FILE" ]; then
+                  TOKEN="$(tr -d '\n' < "$GITHUB_PAT_FILE")"
+                  AUTH_URL="$(echo "$REPO_URL" | sed -E "s#https://#https://x-access-token:${TOKEN}@#")"
+                else
+                  AUTH_URL="$REPO_URL"
+                fi
+                echo "cloning $REPO_URL ($REPO_BRANCH)"
+                git clone --branch "$REPO_BRANCH" --depth 1 "$AUTH_URL" /workspace \
+                  || echo "clone failed — starting empty"
+              fi
+          env:
+            - name: REPO_URL
+              value: "https://github.com/BarneyLaw/home-budget-app.git"
+            - name: REPO_BRANCH
+              value: "main"
+            - name: GITHUB_PAT_FILE
+              value: /var/run/secrets/devbox/github-pat
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: false
+          volumeMounts:
+            - { name: workspace,  mountPath: /workspace }
+            - { name: github-pat, mountPath: /var/run/secrets/devbox, readOnly: true }
+      containers:
+        - name: devbox
+          image: ghcr.io/barneylaw/devbox-flutter:latest  # tag set by CI
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: WORKSPACE
+              value: /home/dev/workspace
+            - name: TUNNEL_NAME
+              value: "flutter-budget-dev"
+            - name: GITHUB_PAT_FILE
+              value: /var/run/secrets/devbox/github-pat
+            - name: GIT_AUTHOR_NAME
+              value: BarneyLaw
+            - name: GIT_AUTHOR_EMAIL
+              value: leifsenlaw993@gmail.com
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 6Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: workspace,   mountPath: /home/dev/workspace }
+            - { name: tunnel-auth, mountPath: /home/dev/.vscode/cli }
+            - { name: codex-auth,  mountPath: /home/dev/.codex }
+            - { name: github-pat,  mountPath: /var/run/secrets/devbox, readOnly: true }
+      volumes:
+        - name: workspace
+          emptyDir: {}
+        - name: tunnel-auth
+          persistentVolumeClaim:
+            claimName: budget-app-tunnel-auth
+        - name: codex-auth
+          persistentVolumeClaim:
+            claimName: budget-app-codex-auth
+        - name: github-pat
+          secret:
+            secretName: budget-app-github-pat
+            items:
+              - { key: github-pat, path: github-pat }

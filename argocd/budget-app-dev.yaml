@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: budget-app-dev
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/barneylaw/homelab-cicd-config.git
+    targetRevision: main
+    path: apps/budget-app-dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: budget-app-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

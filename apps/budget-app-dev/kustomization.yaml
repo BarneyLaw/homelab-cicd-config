@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: budget-app-dev
+resources:
+  - supporting.yaml
+  - deployment.yaml
+images:
+  # CI rewrites newTag for whichever toolchain this project uses.
+  # Name must match exactly (case-sensitive) what CI pushes, lowercased owner.
+  - name: ghcr.io/barneylaw/devbox-flutter
+    newTag: latest
