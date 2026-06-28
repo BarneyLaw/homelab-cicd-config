@@ -6,7 +6,7 @@ metadata:
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    email: YOUR_EMAIL@example.com        # your real email for LE notices
+    email: leifsenlaw993@gmail.com        # your real email for LE notices
     privateKeySecretRef:
       name: letsencrypt-cloudflare-account-key
     solvers:
