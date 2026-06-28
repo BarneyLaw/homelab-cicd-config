@@ -1,0 +1,9 @@
+# apps/cert-manager-issuer/tlsstore.yaml
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default                          # MUST be named "default"
+  namespace: kube-system                 # MUST match Traefik's namespace
+spec:
+  defaultCertificate:
+    secretName: lab-packetcraft-wildcard-tls
