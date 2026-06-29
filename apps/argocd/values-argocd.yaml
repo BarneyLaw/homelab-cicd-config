@@ -1,0 +1,27 @@
+configs:
+  params:
+    server.insecure: true          # THIS is where the insecure flag belongs
+
+controller:
+  nodeSelector:
+    kubernetes.io/hostname: deus
+
+redis:
+  nodeSelector:
+    kubernetes.io/hostname: deus
+
+repoServer:
+  nodeSelector:
+    kubernetes.io/hostname: deus
+
+server:
+  nodeSelector:
+    kubernetes.io/hostname: deus
+
+dex:
+  nodeSelector:
+    kubernetes.io/hostname: deus
+
+applicationSet:
+  nodeSelector:
+    kubernetes.io/hostname: deus

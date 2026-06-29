@@ -1,0 +1,25 @@
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://argoproj.github.io/argo-helm
+      chart: argo-cd
+      targetRevision: 9.5.20              # <-- set to the version from `helm list -n argocd`
+      helm:
+        releaseName: argocd              # match existing release → adopt, not duplicate
+        valueFiles:
+          - $values/apps/argocd/values-argocd.yaml
+    - repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    syncOptions:
+      - ServerSideApply=true
