@@ -1,9 +1,9 @@
-grafana:
-  enabled: true
-  # if you set an admin password or persistence before, reflect it here
-  # so adoption doesn't reset it
-
-prometheus:
-  prometheusSpec:
-    retention: 15d
-    # storageSpec: ... once Longhorn is ready; local-path pins it for now
+prometheus-node-exporter:
+  extraArgs:
+  - --collector.hwmon
+  - --collector.thermal_zone
+  - --collector.rapl
+  securityContext:
+    readOnlyRootFilesystem: true
+    runAsNonRoot: false
+    runAsUser: 0
