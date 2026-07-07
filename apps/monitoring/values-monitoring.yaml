@@ -7,3 +7,5 @@ prometheus-node-exporter:
     readOnlyRootFilesystem: true
     runAsNonRoot: false
     runAsUser: 0
+  daemonsetAnnotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true
