@@ -1,0 +1,70 @@
+# Read-only ServiceAccount for browsing resources + logs cluster-wide.
+# No create/update/delete/exec anywhere. Logs work via pods/log get+list.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dashboard-readonly
+  namespace: kubernetes-dashboard
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: dashboard-readonly
+rules:
+  # Core read-only across all resources you'd want to see + their logs
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - endpoints
+      - configmaps
+      - persistentvolumeclaims
+      - persistentvolumes
+      - nodes
+      - namespaces
+      - events
+      - replicationcontrollers
+      - serviceaccounts
+      - limitranges
+      - resourcequotas
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  # Explicitly NOT granting: secrets read (dashboard can show secret values in
+  # cleartext if given this — leave it out), exec, port-forward, any write verb.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: dashboard-readonly
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dashboard-readonly
+subjects:
+  - kind: ServiceAccount
+    name: dashboard-readonly
+    namespace: kubernetes-dashboard
+---
+# Long-lived token Secret bound to the SA, so you can log in without
+# minting one via kubectl each time. Read it once and stash it in your
+# password manager.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dashboard-readonly-token
+  namespace: kubernetes-dashboard
+  annotations:
+    kubernetes.io/service-account.name: dashboard-readonly
+type: kubernetes.io/service-account-token

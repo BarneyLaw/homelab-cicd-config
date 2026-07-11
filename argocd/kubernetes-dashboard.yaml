@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kubernetes-dashboard
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    # Source 1: the upstream Helm chart, with your values file pulled from the
+    # config repo via $values ref.
+    - repoURL: https://kubernetes.github.io/dashboard/
+      chart: kubernetes-dashboard
+      targetRevision: 7.14.0        # Latest is 7.14.0, it has been archived and will no longer be updated here on out.
+      helm:
+        releaseName: kubernetes-dashboard
+        valueFiles:
+          - $values/apps/kubernetes-dashboard/values.yaml
+    # Source 2: your repo — provides the values file (as a ref) and the RBAC.
+    - repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
+      targetRevision: main
+      ref: values
+    # Source 3: the RBAC manifests, applied directly.
+    - repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
+      targetRevision: main
+      path: apps/kubernetes-dashboard
+      directory:
+        include: 'rbac.yaml'   # only apply rbac.yaml, not values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kubernetes-dashboard
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
