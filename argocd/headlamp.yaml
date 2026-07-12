@@ -17,6 +17,10 @@ spec:
     - repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
       targetRevision: main
       ref: values
+      
+    - repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
+      targetRevision: main
+      path: apps/headlamp/rbac
 
   destination:
     server: https://kubernetes.default.svc

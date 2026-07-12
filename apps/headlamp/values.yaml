@@ -1,12 +1,7 @@
 replicaCount: 1
 
 ingress:
-  enabled: true
-  hosts:
-    - host: headlamp.example.com
-      paths:
-        - path: /
-          type: Prefix
+  enabled: false
 
 service:
   type: ClusterIP
