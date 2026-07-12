@@ -6,7 +6,7 @@ ingress:
     - host: headlamp.example.com
       paths:
         - path: /
-          pathType: Prefix
+          type: Prefix
 
 service:
   type: ClusterIP
