@@ -14,7 +14,7 @@ spec:
         valueFiles:
           - $values/apps/headlamp/values.yaml
 
-    - repoURL: https://github.com/your-org/gitops.git
+    - repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
       targetRevision: main
       ref: values
 
