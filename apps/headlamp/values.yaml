@@ -1,0 +1,12 @@
+replicaCount: 1
+
+ingress:
+  enabled: true
+  hosts:
+    - host: headlamp.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+service:
+  type: ClusterIP
