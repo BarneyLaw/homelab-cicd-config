@@ -4,7 +4,6 @@ prometheus-node-exporter:
   - --collector.thermal_zone
   - --collector.rapl
   securityContext:
-    readOnlyRootFilesystem: true
     runAsNonRoot: false
     runAsUser: 0
   daemonsetAnnotations:
