@@ -8,7 +8,7 @@ spec:
   source:
     repoURL: https://cloudnative-pg.github.io/charts
     chart: cloudnative-pg
-    targetRevision: 0.23.x   # pin to current stable
+    targetRevision: 1.30.0   # pin to current stable
     helm:
       values: |
         nodeSelector:
