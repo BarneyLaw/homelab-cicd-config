@@ -9,3 +9,9 @@ prometheus-node-exporter:
     runAsUser: 0
   daemonsetAnnotations:
     argocd.argoproj.io/sync-options: ServerSideApply=true
+
+grafana:
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
