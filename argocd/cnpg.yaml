@@ -1,15 +1,25 @@
-apiVersion: postgresql.cnpg.io/v1
-kind: Cluster
+apiVersion: argoproj.io/v1alpha1
+kind: Application
 metadata:
-  name: portfolio-db
-  namespace: portfolio
+  name: cnpg
+  namespace: argocd
 spec:
-  instances: 1
-  imageName: ghcr.io/cloudnative-pg/postgresql:16
-  storage:
-    size: 5Gi
-    storageClass: longhorn
-  bootstrap:
-    initdb:
-      database: portfolio
-      owner: portfolio
+  project: default
+  source:
+    repoURL: https://cloudnative-pg.github.io/charts
+    chart: cloudnative-pg
+    targetRevision: 0.23.x   # pin to current stable
+    helm:
+      values: |
+        nodeSelector:
+          kubernetes.io/hostname: deus
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
