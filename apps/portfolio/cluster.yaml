@@ -13,3 +13,17 @@ spec:
     initdb:
       database: portfolio
       owner: portfolio
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://cnpg-backups/portfolio-db
+      endpointURL: http://192.168.1.248:3900
+      s3Credentials:
+        accessKeyId:
+          name: minio-creds
+          key: ACCESS_KEY
+        secretAccessKey:
+          name: minio-creds
+          key: SECRET_KEY
+      wal:
+        compression: gzip
+    retentionPolicy: "30d"
