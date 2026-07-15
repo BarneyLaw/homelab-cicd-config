@@ -1,0 +1,8 @@
+apiVersion: longhorn.io/v1beta2
+kind: BackupTarget
+metadata:
+  name: default
+  namespace: longhorn-system
+spec:
+  backupTargetURL: nfs://192.168.1.248:/tank/backups/longhorn
+  pollIntervalInSeconds: 300
