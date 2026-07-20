@@ -1,0 +1,14 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: portfolio
+  namespace: portfolio
+spec:
+  entryPoints:
+    - web            # Traefik's HTTP entrypoint; cloudflared → localhost:80 → here
+  routes:
+    - match: Host(`packetcraft.dev`)
+      kind: Rule
+      services:
+        - name: portfolio
+          port: 80   # Service port (Service maps 80 → container 8080)
