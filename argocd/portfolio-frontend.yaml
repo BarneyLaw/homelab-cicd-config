@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: portfolio-frontend
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
+    targetRevision: main
+    path: apps/portfolio/frontend
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: portfolio
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -1,14 +1,14 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: portfolio
+  name: portfolio-database
   namespace: argocd
 spec:
   project: default
   source:
     repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
     targetRevision: main
-    path: apps/portfolio
+    path: apps/portfolio/database
   destination:
     server: https://kubernetes.default.svc
     namespace: portfolio

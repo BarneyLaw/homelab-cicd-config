@@ -1,17 +1,17 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: portfolio
+  name: portfolio-frontend
   namespace: portfolio
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: portfolio
+      app: portfolio-frontend
   template:
     metadata:
       labels:
-        app: portfolio
+        app: portfolio-frontend
     spec:
       containers:
         - name: portfolio
