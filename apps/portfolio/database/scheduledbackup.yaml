@@ -1,0 +1,11 @@
+# apps/portfolio/database/scheduledbackup.yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: portfolio-db-daily
+  namespace: portfolio
+spec:
+  schedule: "0 0 3 * * *"
+  cluster:
+    name: portfolio-db
+  backupOwnerReference: cluster
