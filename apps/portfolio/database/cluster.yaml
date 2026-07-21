@@ -19,10 +19,10 @@ spec:
       endpointURL: http://192.168.1.248:3900
       s3Credentials:
         accessKeyId:
-          name: backup_store_creds
+          name: backup-store-creds
           key: ACCESS_KEY
         secretAccessKey:
-          name: backup_store_creds
+          name: backup-store-creds
           key: SECRET_KEY
       wal:
         compression: gzip
