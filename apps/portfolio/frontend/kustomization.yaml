@@ -10,4 +10,4 @@ resources:
 images:
 - name: ghcr.io/barneylaw/portfolio-site
   newName: ghcr.io/barneylaw/portfolio-site
-  newTag: 3f525f9
+  newTag: cf098ee
