@@ -5,4 +5,4 @@ metadata:
   namespace: longhorn-system
 spec:
   backupTargetURL: nfs://192.168.1.248:/tank/backups/longhorn
-  pollIntervalInSeconds: 300
+  pollIntervalInSeconds: 5m0s
