@@ -19,10 +19,10 @@ spec:
       endpointURL: http://192.168.1.248:3900
       s3Credentials:
         accessKeyId:
-          name: minio-creds
+          name: backup_store_creds
           key: ACCESS_KEY
         secretAccessKey:
-          name: minio-creds
+          name: backup_store_creds
           key: SECRET_KEY
       wal:
         compression: gzip
