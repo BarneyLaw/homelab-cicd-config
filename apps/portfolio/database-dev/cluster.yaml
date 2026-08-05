@@ -1,0 +1,26 @@
+# apps/portfolio/database-dev/cluster.yaml
+#
+# Dev twin of portfolio-db. Same engine and same database/owner names as prod,
+# so app config differs only by host. Deliberately NOT prod:
+#   - no backup/barmanObjectStore + no ScheduledBackup: dev data is disposable
+#   - smaller volume
+#
+# Connection details are published by CNPG in the generated secret
+# portfolio-db-dev-app (username / password / dbname / host / port / uri).
+# Point dev workloads at portfolio-db-dev-rw.portfolio-dev.svc.cluster.local:5432
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: portfolio-db-dev
+  namespace: portfolio-dev
+spec:
+  instances: 1
+  # Keep this on the same major version as portfolio-db.
+  imageName: ghcr.io/cloudnative-pg/postgresql:18
+  storage:
+    size: 2Gi
+    storageClass: longhorn
+  bootstrap:
+    initdb:
+      database: portfolio
+      owner: portfolio
