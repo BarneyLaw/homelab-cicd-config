@@ -18,13 +18,22 @@ spec:
       secret:
         name: penny-dev-db-app
 
+  enableSuperuserAccess: false
+
   postgresql:
     pg_hba:
-      - host penny penny 100.64.0.0/10 scram-sha-256
+      - host penny penny 10.42.0.0/16 scram-sha-256
       - host penny penny 192.168.1.0/24 scram-sha-256
+    parameters:
+      max_connections: "50"
+      log_min_duration_statement: "500"
 
   monitoring:
     enablePodMonitor: true
+
+  affinity:
+    nodeSelector:
+      kubernetes.io/hostname: nebula
 
   resources:
     requests:

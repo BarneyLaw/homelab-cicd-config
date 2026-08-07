@@ -4,7 +4,7 @@ metadata:
   name: penny-dev-db-lb
   namespace: penny-dev
   annotations:
-    svccontroller.k3s.cattle.io/lbpool: deus
+    svccontroller.k3s.cattle.io/lbpool: penny-dev-db
 spec:
   type: LoadBalancer
   selector:
@@ -14,4 +14,3 @@ spec:
     - name: postgres
       port: 5432
       targetPort: 5432
-  
