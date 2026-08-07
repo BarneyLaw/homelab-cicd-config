@@ -1,0 +1,34 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: penny-dev-db
+  namespace: penny-dev
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.0
+
+  storage:
+    size: 10Gi
+    storageClass: longhorn
+
+  bootstrap:
+    initdb:
+      database: penny
+      owner: penny
+      secret:
+        name: penny-dev-db-app
+
+  postgresql:
+    pg_hba:
+      - host penny penny 100.64.0.0/10 scram-sha-256
+      - host penny penny 192.168.1.0/24 scram-sha-256
+
+  monitoring:
+    enablePodMonitor: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
