@@ -1,0 +1,47 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: traefik-recording
+  namespace: monitoring
+  labels:
+    release: kube-prom
+spec:
+  groups:
+    - name: traefik.service.sli
+      interval: 30s
+      rules:
+        # Rules in a group evaluate in order, so the ratio below can
+        # reference the two rates declared above it.
+        - record: traefik_service:requests:rate5m
+          expr: sum by (service) (rate(traefik_service_requests_total[5m]))
+
+        - record: traefik_service:requests_5xx:rate5m
+          expr: sum by (service) (rate(traefik_service_requests_total{code=~"5.."}[5m]))
+
+        - record: traefik_service:error_ratio:rate5m
+          expr: |
+            traefik_service:requests_5xx:rate5m
+              / traefik_service:requests:rate5m
+
+        - record: traefik_service:duration_seconds:p95_5m
+          expr: |
+            histogram_quantile(0.95,
+              sum by (service, le) (rate(traefik_service_request_duration_seconds_bucket[5m]))
+            )
+
+        - record: traefik_service:duration_seconds:p99_5m
+          expr: |
+            histogram_quantile(0.99,
+              sum by (service, le) (rate(traefik_service_request_duration_seconds_bucket[5m]))
+            )
+
+    - name: traefik.config.health
+      interval: 30s
+      rules:
+        # Keep `pod` here. These are per-instance and aggregating them away
+        # would hide one replica being wedged.
+        - record: traefik:config_reload_lag_seconds
+          expr: time() - traefik_config_last_reload_success
+
+        - record: traefik:config_reloads:increase10m
+          expr: increase(traefik_config_reloads_total[10m])
