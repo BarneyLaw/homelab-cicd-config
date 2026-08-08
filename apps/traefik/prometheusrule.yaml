@@ -10,7 +10,7 @@ spec:
     - name: traefik.service.sli
       interval: 30s
       rules:
-        # Rules in a group evaluate in order, so the ratio below can
+        # Rules evaluate in order within a group, so the ratio below can
         # reference the two rates declared above it.
         - record: traefik_service:requests:rate5m
           expr: sum by (service) (rate(traefik_service_requests_total[5m]))
@@ -18,28 +18,37 @@ spec:
         - record: traefik_service:requests_5xx:rate5m
           expr: sum by (service) (rate(traefik_service_requests_total{code=~"5.."}[5m]))
 
+        # NaN while idle (0/0). That is intentional: NaN > threshold is false,
+        # so an idle service will not trip a future alert.
         - record: traefik_service:error_ratio:rate5m
           expr: |
             traefik_service:requests_5xx:rate5m
               / traefik_service:requests:rate5m
 
+        # protocol!="websocket" is load-bearing. Websocket upgrades record
+        # connection LIFETIME (with code="0"), not request latency. Including
+        # them drags p95/p99 toward +Inf and makes Headlamp look broken.
         - record: traefik_service:duration_seconds:p95_5m
           expr: |
             histogram_quantile(0.95,
-              sum by (service, le) (rate(traefik_service_request_duration_seconds_bucket[5m]))
+              sum by (service, le) (
+                rate(traefik_service_request_duration_seconds_bucket{protocol!="websocket"}[5m])
+              )
             )
 
         - record: traefik_service:duration_seconds:p99_5m
           expr: |
             histogram_quantile(0.99,
-              sum by (service, le) (rate(traefik_service_request_duration_seconds_bucket[5m]))
+              sum by (service, le) (
+                rate(traefik_service_request_duration_seconds_bucket{protocol!="websocket"}[5m])
+              )
             )
 
     - name: traefik.config.health
       interval: 30s
       rules:
-        # Keep `pod` here. These are per-instance and aggregating them away
-        # would hide one replica being wedged.
+        # Keep `pod` here rather than aggregating it away, so a single wedged
+        # replica stays visible.
         - record: traefik:config_reload_lag_seconds
           expr: time() - traefik_config_last_reload_success
 

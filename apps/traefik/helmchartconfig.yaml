@@ -4,6 +4,8 @@ metadata:
   name: traefik
   namespace: kube-system
 spec:
+  # Merged by K3s helm-controller over the packaged chart's own values.
+  # Chart: traefik-39.0.701+up39.0.7 (upstream traefik-helm-chart v39.0.7)
   valuesContent: |-
     metrics:
       prometheus:
@@ -16,5 +18,6 @@ spec:
         serviceMonitor:
           enabled: true
           interval: 30s
+          honorLabels: true
           additionalLabels:
             release: kube-prom
