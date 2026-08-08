@@ -2,6 +2,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: monitoring
 
+resources:
+- grafana-admin-sealedsecret.yaml
+- grafana-dashboard-homelab-overview.yaml
+- grafana-ingress-tail.yaml
+- scrapeconfig-nebula-gpu.yaml
+
 configMapGenerator:
   - name: grafana-dashboard-traefik
     files:
