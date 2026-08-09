@@ -10,5 +10,5 @@ spec:
     - match: Host(`site.packetcraft.dev`)
       kind: Rule
       services:
-        - name: portfolio
+        - name: portfolio-frontend
           port: 80   # Service port (Service maps 80 → container 8080)
