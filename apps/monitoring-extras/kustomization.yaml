@@ -4,11 +4,16 @@ namespace: monitoring
 
 resources:
 - grafana-admin-sealedsecret.yaml
-- grafana-dashboard-homelab-overview.yaml
 - grafana-ingress-tail.yaml
 - scrapeconfig-nebula-gpu.yaml
 
 configMapGenerator:
+  - name: grafana-dashboard-homelab-overview
+    files:
+      - dashboards/homelab-overview.json
+    options:
+      labels:
+        grafana_dashboard: "1"   # kube-prom Grafana sidecar watches for this label
   - name: grafana-dashboard-traefik
     files:
       - dashboards/traefik.json

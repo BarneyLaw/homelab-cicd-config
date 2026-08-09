@@ -7,7 +7,7 @@ spec:
   entryPoints:
     - web            # Traefik's HTTP entrypoint; cloudflared → localhost:80 → here
   routes:
-    - match: Host(`packetcraft.dev`)
+    - match: Host(`site.packetcraft.dev`)
       kind: Rule
       services:
         - name: portfolio
