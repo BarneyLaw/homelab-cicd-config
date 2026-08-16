@@ -2,26 +2,26 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: portfolio
 resources:
-  - deployment.yaml
-  - service.yaml
-  - portfolio-ingress.yaml
-  - content-sync-job.yaml
+- deployment.yaml
+- service.yaml
+- portfolio-ingress.yaml
+- content-sync-job.yaml
 
 configMapGenerator:
-  - name: portfolio-content-registry
-    files:
-      - content-registry.json=content-registry.json
+- files:
+  - content-registry.json=content-registry.json
+  name: portfolio-content-registry
 
 generatorOptions:
   annotations:
     argocd.argoproj.io/sync-wave: "-2"
   # name MUST be all-lowercase and match the built image exactly (case-sensitive).
   # `kustomize edit set image` rewrites newTag below.
+
 images:
 - name: ghcr.io/barneylaw/portfolio-site
   newName: ghcr.io/barneylaw/portfolio-site
-  newTag: 390e8dd
-
+  newTag: 179ffe5
 - name: ghcr.io/home-compute-cluster/portfolio-backend
   newName: ghcr.io/home-compute-cluster/portfolio-backend
   newTag: 9363f3e
