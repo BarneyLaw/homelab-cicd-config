@@ -11,4 +11,4 @@ resources:
 images:
 - name: ghcr.io/home-compute-cluster/portfolio-backend
   newName: ghcr.io/home-compute-cluster/portfolio-backend
-  newTag: 775a43c
+  newTag: 997d078
