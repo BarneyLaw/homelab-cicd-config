@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "mode": "full",
+  "source": "portfolio-site",
+  "revision": "ef743b0777515fcaab951cab062d74638333db40",
+  "items": [
+    {
+      "slug": "building-a-homelab",
+      "kind": "blog",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "cs2105",
+      "kind": "review",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "henz-was-probably-right",
+      "kind": "blog",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "i7-9700k",
+      "kind": "review",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "k3s-cluster",
+      "kind": "project",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "lan-drop",
+      "kind": "project",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "obsync",
+      "kind": "project",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "overlays-on-non-moddable-games",
+      "kind": "blog",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "relic-overlay",
+      "kind": "project",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "the-compiler-was-the-shell",
+      "kind": "blog",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "warframe",
+      "kind": "review",
+      "status": "published",
+      "comments_enabled": true
+    }
+  ]
+}
