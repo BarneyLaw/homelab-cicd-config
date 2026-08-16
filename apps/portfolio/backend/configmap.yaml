@@ -25,6 +25,7 @@ data:
   RATE_LIKES_PER_MIN: "30"
   RATE_READS_PER_MIN: "60"
   RATE_LIMIT_MAX_KEYS: "10000"
+  TRUSTED_PROXY_CIDRS: "10.42.0.0/16"
   # Set this in GitOps to the actual Traefik/pod-network CIDRs. Never use 0.0.0.0/0.
   TRUSTED_PROXY_CIDRS: 
   CF_ACCESS_TEAM_DOMAIN: "https://red-wood-37e7.cloudflareaccess.com"
