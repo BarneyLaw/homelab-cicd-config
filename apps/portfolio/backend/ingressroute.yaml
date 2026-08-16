@@ -1,0 +1,34 @@
+# Reference only. The homelab GitOps repository owns the live Traefik routes.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: portfolio-backend-public
+  namespace: portfolio
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: Host(`site.packetcraft.dev`) && PathPrefix(`/api`)
+      priority: 100
+      services:
+        - name: portfolio-backend
+          port: http
+
+---
+# Cloudflare Access must protect this entire hostname before traffic reaches Traefik.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: portfolio-backend-admin
+  namespace: portfolio
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: Host(`admin.site.packetcraft.dev`) && PathPrefix(`/api/admin`)
+      priority: 200
+      services:
+        - name: portfolio-backend
+          port: http

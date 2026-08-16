@@ -21,3 +21,8 @@ spec:
           honorLabels: true
           additionalLabels:
             release: kube-prom
+    ports:
+      web:
+        forwardedHeaders:
+          trustedIPs:
+            - "10.42.0.0/24"
