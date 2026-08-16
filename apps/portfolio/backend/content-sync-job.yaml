@@ -1,0 +1,60 @@
+# Kustomize generates portfolio-content-registry from the frontend-owned JSON
+# file at sync wave -2; see PRE_APPLY.md. Do not maintain its data by hand.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: portfolio-backend-content-sync
+  namespace: portfolio
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "0"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  activeDeadlineSeconds: 120
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: portfolio-backend-content-sync
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: sync-content
+          image: ghcr.io/home-compute-cluster/portfolio-backend:git-sha
+          command:
+            - /sync-content
+          args:
+            - -manifest
+            - /content/content-registry.json
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: portfolio-db-app
+                  key: uri
+          volumeMounts:
+            - name: content-registry
+              mountPath: /content
+              readOnly: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: content-registry
+          configMap:
+            name: portfolio-content-registry

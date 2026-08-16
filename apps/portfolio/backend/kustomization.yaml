@@ -8,6 +8,16 @@ resources:
 - deployment.yaml
 - service.yaml
 - ingressroute.yaml
+- content-sync-job.yaml
+configMapGenerator:
+  - name: portfolio-content-registry
+    files:
+      - content-registry.json=content-registry.json
+
+generatorOptions:
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+    
 images:
 - name: ghcr.io/home-compute-cluster/portfolio-backend
   newName: ghcr.io/home-compute-cluster/portfolio-backend
