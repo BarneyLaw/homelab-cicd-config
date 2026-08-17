@@ -1,0 +1,68 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: longhorn-recording
+  # Lives in `monitoring`, not `longhorn-system`, even though this file is
+  # synced by the longhorn Application. Matches where the Traefik rules already
+  # live and where they're already proven to be picked up.
+  namespace: monitoring
+  labels:
+    release: kube-prom
+spec:
+  groups:
+    - name: longhorn.volume.sli
+      interval: 30s
+      rules:
+        # IMPORTANT — metric shape changed in Longhorn 1.10+.
+        # longhorn_volume_robustness is NOT an enum value anymore. It emits one
+        # series per state with value 1 for the current state and 0 for the rest:
+        #   longhorn_volume_robustness{volume="x",state="degraded"} 1
+        # The alert examples still published in the Longhorn docs use
+        # `longhorn_volume_robustness == 2`, which now matches nothing on 1.12
+        # and produces alerts that never fire. Same for longhorn_volume_state.
+        #
+        # `max by (volume)` collapses the reporting node away. A volume is
+        # reported by exactly one longhorn-manager (the owner), but during an
+        # engine failover two managers can briefly report it — max keeps the
+        # count honest instead of double-counting.
+        - record: longhorn_volume:total:count
+          expr: count(max by (volume) (longhorn_volume_robustness{state="healthy"})) or vector(0)
+
+        - record: longhorn_volume:healthy:count
+          expr: count(max by (volume) (longhorn_volume_robustness{state="healthy"}) == 1) or vector(0)
+
+        - record: longhorn_volume:degraded:count
+          expr: count(max by (volume) (longhorn_volume_robustness{state="degraded"}) == 1) or vector(0)
+
+        - record: longhorn_volume:faulted:count
+          expr: count(max by (volume) (longhorn_volume_robustness{state="faulted"}) == 1) or vector(0)
+
+        # Actual (thin-provisioned) space vs configured size. This is the number
+        # that matters for a homelab — a 10Gi PVC that has only written 400Mi is
+        # not 10Gi of disk. Longhorn's own UI reports the same pair.
+        - record: longhorn_volume:used_ratio
+          expr: |
+            max by (pvc_namespace, pvc, volume) (longhorn_volume_actual_size_bytes)
+              / max by (pvc_namespace, pvc, volume) (longhorn_volume_capacity_bytes)
+
+    - name: longhorn.capacity
+      interval: 30s
+      rules:
+        - record: longhorn_node:storage_used_ratio
+          expr: longhorn_node_storage_usage_bytes / longhorn_node_storage_capacity_bytes
+
+        - record: longhorn_node:storage_available_bytes
+          expr: longhorn_node_storage_capacity_bytes - longhorn_node_storage_usage_bytes
+
+        # What Longhorn will actually let you schedule: capacity minus the
+        # reservation held back for the OS minus what's already used. This is
+        # usually well below "available", and it's the number that explains a
+        # "no space" scheduling failure on nebula/legion.
+        - record: longhorn_node:storage_schedulable_bytes
+          expr: |
+            longhorn_node_storage_capacity_bytes
+              - longhorn_node_storage_reservation_bytes
+              - longhorn_node_storage_usage_bytes
+
+        - record: longhorn_disk:storage_used_ratio
+          expr: longhorn_disk_usage_bytes / longhorn_disk_capacity_bytes

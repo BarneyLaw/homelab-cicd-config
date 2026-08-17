@@ -1,0 +1,27 @@
+# Values for the upstream longhorn chart (charts.longhorn.io, 1.12.0).
+#
+# Deliberately minimal. Disk configuration (dedicated disks on nebula/legion,
+# deus excluded from scheduling) lives in the Longhorn Node CRs, NOT here —
+# setting defaultSettings/defaultDiskSelector in this file would fight the
+# live node config on every sync.
+#
+# The only thing this file turns on is the chart's built-in ServiceMonitor.
+metrics:
+  serviceMonitor:
+    enabled: true
+
+    # kube-prom's Prometheus CR selects ServiceMonitors with
+    # `serviceMonitorSelector: {matchLabels: {release: kube-prom}}`.
+    # Without this label the ServiceMonitor is created, ArgoCD reports Healthy,
+    # and Prometheus silently never scrapes it. Same failure class as the
+    # Traefik IngressRoute service-name mismatch: valid schema, no effect.
+    additionalLabels:
+      release: kube-prom
+
+    interval: 30s
+    scrapeTimeout: 10s
+
+    # No `honorLabels` here on purpose. Traefik needed it because Prometheus'
+    # target labels collided with Traefik's own `service=` label. Longhorn's
+    # labels (node, disk, volume, pvc, pvc_namespace, state) don't collide with
+    # anything kube-prom attaches, so the default (honorLabels absent) is correct.

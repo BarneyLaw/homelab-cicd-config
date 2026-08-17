@@ -1,0 +1,117 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: longhorn-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prom
+spec:
+  groups:
+    - name: longhorn.health
+      rules:
+        # Adapted from the upstream Longhorn examples, with two changes:
+        #   1. Rewritten for the label-based robustness metric (see the comment
+        #      in prometheusrule.yaml — the upstream `== 3` form is dead on 1.12).
+        #   2. `for:` durations widened. kured cordons/drains/reboots a node on
+        #      every patch cycle; every replica on that node goes degraded and
+        #      then rebuilds. The upstream 5m would page on every patch window.
+        - alert: LonghornVolumeFaulted
+          expr: max by (pvc_namespace, pvc, volume) (longhorn_volume_robustness{state="faulted"}) == 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: Longhorn volume {{ $labels.volume }} has no healthy replica
+            description: >-
+              Volume {{ $labels.volume }} ({{ $labels.pvc_namespace }}/{{ $labels.pvc }})
+              is Faulted. Data is unavailable and at risk. Check the Longhorn UI
+              and longhorn-manager logs on nebula and legion.
+
+        - alert: LonghornVolumeDegraded
+          expr: max by (pvc_namespace, pvc, volume) (longhorn_volume_robustness{state="degraded"}) == 1
+          for: 20m
+          labels:
+            severity: warning
+          annotations:
+            summary: Longhorn volume {{ $labels.volume }} degraded for 20m
+            description: >-
+              Volume {{ $labels.volume }} ({{ $labels.pvc_namespace }}/{{ $labels.pvc }})
+              has been missing a replica for 20 minutes. A kured reboot causes
+              this transiently; 20m means the rebuild is stuck or a node has not
+              come back.
+
+        - alert: LonghornVolumeReadOnly
+          expr: longhorn_volume_file_system_read_only == 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: Longhorn volume {{ $labels.volume }} remounted read-only
+            description: >-
+              The filesystem on {{ $labels.volume }} ({{ $labels.pvc_namespace }}/{{ $labels.pvc }})
+              is read-only. Writes from the workload are failing right now.
+
+        - alert: LonghornNodeDown
+          expr: |
+            (avg(longhorn_node_count_total) or on() vector(0))
+              - (count(longhorn_node_status{condition="ready"} == 1) or on() vector(0)) > 0
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $value }} Longhorn node(s) not ready"
+            description: >-
+              A Longhorn node has been unready for 15 minutes — longer than a
+              normal kured cordon-drain-reboot cycle.
+
+        # If the ServiceMonitor breaks (label dropped, chart upgrade resets
+        # metrics.serviceMonitor.enabled, port rename), everything above goes
+        # silent and ArgoCD still reports Healthy. This is the canary for that.
+        - alert: LonghornMetricsMissing
+          expr: absent(longhorn_node_count_total)
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: No Longhorn metrics reaching Prometheus
+            description: >-
+              longhorn_node_count_total has been absent for 15 minutes. Check
+              Prometheus → Status → Targets for the longhorn-system endpoints,
+              and that the ServiceMonitor still carries `release: kube-prom`.
+
+    - name: longhorn.capacity
+      rules:
+        - alert: LonghornVolumeSpaceWarning
+          expr: longhorn_volume:used_ratio > 0.90
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Longhorn volume {{ $labels.volume }} over 90% full
+            description: >-
+              {{ $labels.pvc_namespace }}/{{ $labels.pvc }} is at
+              {{ $value | humanizePercentage }} of its configured size.
+
+        - alert: LonghornNodeStorageWarning
+          expr: longhorn_node:storage_used_ratio > 0.75
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Longhorn storage on {{ $labels.node }} over 75% used
+            description: >-
+              Node {{ $labels.node }} is at {{ $value | humanizePercentage }} of
+              its Longhorn storage capacity. With two storage nodes, losing
+              headroom on one removes the ability to rebuild a replica.
+
+        - alert: LonghornDiskStorageCritical
+          expr: longhorn_disk:storage_used_ratio > 0.90
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Longhorn disk {{ $labels.disk }} on {{ $labels.node }} over 90% used
+            description: >-
+              Disk {{ $labels.disk }} is at {{ $value | humanizePercentage }}.
+              Longhorn will stop scheduling replicas here and existing volumes
+              can fail writes.

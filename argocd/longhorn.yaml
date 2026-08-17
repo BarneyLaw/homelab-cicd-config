@@ -9,6 +9,16 @@ spec:
     - repoURL: https://charts.longhorn.io
       chart: longhorn
       targetRevision: 1.12.0
+      helm:
+        releaseName: longhorn      # match the existing release → adopt, not duplicate
+        valueFiles:
+          - $values/apps/longhorn/values-longhorn.yaml
+
+    # ref-only source: provides $values above. No `path`, so nothing is rendered
+    # from it. Same shape as kube-prometheus-stack / headlamp / argocd.
+    - repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
+      targetRevision: main
+      ref: values
 
     - repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
       targetRevision: main
@@ -24,4 +34,3 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
-      
