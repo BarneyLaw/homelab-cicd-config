@@ -28,7 +28,7 @@ configMapGenerator:
         grafana_dashboard: "1"    
   - name: grafana-dashboard-cloudflared
     files:
-      - dashboards/cloudflared.json
+      - dashboards/grafana-dashboard-cloudflared.json
     options:
       labels:
         grafana_dashboard: "1"  
