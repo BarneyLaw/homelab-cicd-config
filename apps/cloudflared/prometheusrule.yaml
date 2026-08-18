@@ -1,0 +1,69 @@
+# Lives in the monitoring namespace even though this Application targets
+# `cloudflared` — same placement as the Traefik and Longhorn rules.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cloudflared-rules
+  namespace: monitoring
+  labels:
+    release: kube-prom
+spec:
+  groups:
+    - name: cloudflared.alerts
+      rules:
+        # Each connector opens 4 connections to the Cloudflare edge. Fewer than
+        # 4 means degraded redundancy, not an outage — and kured draining a node
+        # legitimately produces this, hence the wide `for:`.
+        - alert: CloudflaredConnectorDegraded
+          expr: cloudflared_tunnel_ha_connections < 4
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "cloudflared {{ $labels.pod }} has {{ $value }}/4 edge connections"
+            description: >-
+              Connector has lost edge connections. Check pod logs for QUIC
+              handshake failures or upstream network problems.
+
+        # Every connector is gone: all public traffic is dead.
+        - alert: CloudflaredConnectorDown
+          expr: sum(cloudflared_tunnel_ha_connections) == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No cloudflared connectors registered — public ingress is down"
+
+        # Canary: catches ServiceMonitor label breakage on chart upgrades, and
+        # the case where every pod is gone (in which case the two alerts above
+        # go silent rather than firing, because the series disappears).
+        - alert: CloudflaredMetricsMissing
+          expr: absent(cloudflared_tunnel_ha_connections)
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "cloudflared metrics absent from Prometheus"
+            description: >-
+              Either no cloudflared pods are running or the ServiceMonitor is no
+              longer being selected. Check `kubectl get servicemonitor -n
+              cloudflared -o yaml` labels against the Prometheus selector.
+
+        # Origin-side errors: cloudflared reached the edge fine but failed
+        # talking to Traefik. This is the alert that would have caught the
+        # `404 page not found` class of failure from the ingress side.
+        - alert: CloudflaredOriginErrorRate
+          expr: |
+            sum(rate(cloudflared_tunnel_request_errors[5m]))
+              /
+            clamp_min(sum(rate(cloudflared_tunnel_total_requests[5m])), 0.01)
+              > 0.05
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "cloudflared origin error rate {{ $value | humanizePercentage }}"
+            description: >-
+              cloudflared is failing to reach or get clean responses from
+              Traefik. Check the Traefik service DNS in the tunnel's public
+              hostname config.

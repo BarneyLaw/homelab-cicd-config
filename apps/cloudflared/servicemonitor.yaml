@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cloudflared
+  namespace: cloudflared
+  labels:
+    # Must match kube-prom's serviceMonitorSelector. Verify with:
+    #   kubectl get prometheus -n monitoring -o jsonpath='{.items[0].spec.serviceMonitorSelector}'
+    release: kube-prom
+spec:
+  selector:
+    matchLabels:
+      app: cloudflared
+  endpoints:
+    - port: metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      path: /metrics

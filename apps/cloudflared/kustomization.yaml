@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+ 
+# NOTE: deliberately NO top-level `namespace:` field here.
+#
+# Setting `namespace: cloudflared` would rewrite metadata.namespace on every
+# resource in this kustomization — including prometheusrule.yaml, which must
+# stay in `monitoring`. Each resource carries its own explicit namespace
+# instead.
+ 
+resources:
+  - namespace.yaml
+  - token-sealed.yaml
+  - deployment.yaml
+  - service.yaml
+  - servicemonitor.yaml
+  - prometheusrule.yaml
+ 
