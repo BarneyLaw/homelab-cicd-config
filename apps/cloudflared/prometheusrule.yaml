@@ -1,5 +1,13 @@
-# Lives in the monitoring namespace even though this Application targets
-# `cloudflared` — same placement as the Traefik and Longhorn rules.
+# Lives in the monitoring namespace even though the cloudflared Application
+# targets `cloudflared` — same placement as the Traefik and Longhorn rules.
+#
+# Metric names verified against cloudflared 2026.8.2 by curling :2000/metrics on
+# a live pod. Notable absences in this version, all of which appear in
+# Cloudflare's own docs or third-party dashboards:
+#   - cloudflared_tunnel_response_by_code       (documented, not emitted)
+#   - cloudflared_tunnel_request_duration_*     (documented, not emitted)
+#   - cloudflared_tunnel_active_streams         (documented, never emitted)
+# Status codes and request latency come from Traefik instead.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -11,9 +19,10 @@ spec:
   groups:
     - name: cloudflared.alerts
       rules:
-        # Each connector opens 4 connections to the Cloudflare edge. Fewer than
-        # 4 means degraded redundancy, not an outage — and kured draining a node
-        # legitimately produces this, hence the wide `for:`.
+        # cloudflared_tunnel_ha_connections is an unlabelled per-pod gauge that
+        # sits at 4 when healthy (one QUIC connection per edge colo). Fewer than
+        # 4 is degraded redundancy, not an outage — and a kured drain produces
+        # this legitimately, hence the wide `for:`.
         - alert: CloudflaredConnectorDegraded
           expr: cloudflared_tunnel_ha_connections < 4
           for: 15m
@@ -23,9 +32,10 @@ spec:
             summary: "cloudflared {{ $labels.pod }} has {{ $value }}/4 edge connections"
             description: >-
               Connector has lost edge connections. Check pod logs for QUIC
-              handshake failures or upstream network problems.
+              handshake failures. If UDP/7844 is blocked, cloudflared falls back
+              to HTTP/2 and logs it explicitly.
 
-        # Every connector is gone: all public traffic is dead.
+        # Every connector gone: all public traffic is dead (Cloudflare 1033).
         - alert: CloudflaredConnectorDown
           expr: sum(cloudflared_tunnel_ha_connections) == 0
           for: 5m
@@ -33,10 +43,13 @@ spec:
             severity: critical
           annotations:
             summary: "No cloudflared connectors registered — public ingress is down"
+            description: >-
+              Cloudflare has zero healthy connectors and is serving error 1033.
+              Check the Deployment and the TUNNEL_TOKEN secret.
 
-        # Canary: catches ServiceMonitor label breakage on chart upgrades, and
-        # the case where every pod is gone (in which case the two alerts above
-        # go silent rather than firing, because the series disappears).
+        # Canary. When every pod dies the series disappears entirely, so the two
+        # alerts above go silent rather than firing. Also catches ServiceMonitor
+        # label breakage on chart upgrades.
         - alert: CloudflaredMetricsMissing
           expr: absent(cloudflared_tunnel_ha_connections)
           for: 15m
@@ -46,24 +59,56 @@ spec:
             summary: "cloudflared metrics absent from Prometheus"
             description: >-
               Either no cloudflared pods are running or the ServiceMonitor is no
-              longer being selected. Check `kubectl get servicemonitor -n
-              cloudflared -o yaml` labels against the Prometheus selector.
+              longer selected by kube-prom. Compare the ServiceMonitor labels
+              against the Prometheus serviceMonitorSelector.
 
-        # Origin-side errors: cloudflared reached the edge fine but failed
-        # talking to Traefik. This is the alert that would have caught the
-        # `404 page not found` class of failure from the ingress side.
-        - alert: CloudflaredOriginErrorRate
+        # Connectors pull ingress config from the Cloudflare API and report the
+        # version they hold. Divergence means one connector missed a config push
+        # — or is registered to a different tunnel entirely, which is exactly
+        # what a token mix-up looks like from the metrics side.
+        - alert: CloudflaredConfigVersionDivergence
           expr: |
-            sum(rate(cloudflared_tunnel_request_errors[5m]))
-              /
-            clamp_min(sum(rate(cloudflared_tunnel_total_requests[5m])), 0.01)
-              > 0.05
+            max(cloudflared_orchestration_config_version)
+              - min(cloudflared_orchestration_config_version) > 0
           for: 10m
           labels:
             severity: warning
           annotations:
-            summary: "cloudflared origin error rate {{ $value | humanizePercentage }}"
+            summary: "cloudflared connectors hold divergent config versions"
             description: >-
-              cloudflared is failing to reach or get clean responses from
-              Traefik. Check the Traefik service DNS in the tunnel's public
-              hostname config.
+              Connectors disagree on ingress config version. Check the
+              "Updated to new configuration" log line on each pod and confirm
+              every pod reports the same tunnelID.
+
+        # Origin-side connect failures: cloudflared reached the edge but could
+        # not open a stream to Traefik. This is what surfaces a broken origin URL
+        # in the tunnel's public hostname config.
+        - alert: CloudflaredOriginConnectErrors
+          expr: rate(cloudflared_proxy_connect_streams_errors[10m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "cloudflared failing to open streams to origin"
+            description: >-
+              Confirm the tunnel's public hostnames point at
+              http://traefik.kube-system.svc.cluster.local:80 and that the
+              Traefik service has endpoints.
+
+        # GATED — enable only after confirming these counters actually increment.
+        # Push ~20 requests through the tunnel and re-read :2000/metrics on both
+        # pods. If total_requests stays at 0, the counters are stale in the QUIC
+        # proxy path and this rule is a permanent no-op: delete it and rely on
+        # Traefik's error-rate alerts instead.
+        #
+        # - alert: CloudflaredOriginErrorRate
+        #   expr: |
+        #     sum(rate(cloudflared_tunnel_request_errors[5m]))
+        #       /
+        #     clamp_min(sum(rate(cloudflared_tunnel_total_requests[5m])), 0.01)
+        #       > 0.05
+        #   for: 10m
+        #   labels:
+        #     severity: warning
+        #   annotations:
+        #     summary: "cloudflared origin error rate {{ $value | humanizePercentage }}"
