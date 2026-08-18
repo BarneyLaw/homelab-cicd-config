@@ -30,7 +30,7 @@ spec:
           # Pin. Match whatever `cloudflared --version` reported on deus before
           # decommissioning the systemd unit — that build is known-good against
           # this tunnel.
-          image: cloudflare/cloudflared:2026.2.1
+          image: cloudflare/cloudflared:2026.8.2
           args:
             - tunnel
             - --no-autoupdate
