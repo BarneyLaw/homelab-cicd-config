@@ -54,3 +54,7 @@ spec:
 
   monitoring:
     enablePodMonitor: true
+    podMonitorRelabelings:
+      - sourceLabels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+        targetLabel: cluster
+        action: replace

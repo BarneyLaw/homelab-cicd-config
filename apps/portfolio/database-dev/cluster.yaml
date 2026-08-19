@@ -37,3 +37,11 @@ spec:
 
   monitoring:
     enablePodMonitor: true
+    # Query-ConfigMap metrics are emitted with nil constLabels, so nothing
+    # identifies which cluster they came from. Pod names churn on restart
+    # (portfolio-db-1 -> -2), so `pod` is not a stable key either. Copy the
+    # pod's cnpg.io/cluster label onto every sample from this scrape.
+    podMonitorRelabelings:
+      - sourceLabels: [__meta_kubernetes_pod_label_cnpg_io_cluster]
+        targetLabel: cluster
+        action: replace
