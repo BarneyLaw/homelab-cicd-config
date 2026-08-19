@@ -32,7 +32,13 @@ configMapGenerator:
     options:
       labels:
         grafana_dashboard: "1"  
-
+  - name: grafana-dashboard-cnpg
+    files:
+      - dashboards/cnpg.json
+    options:
+      labels:
+        grafana_dashboard: "1"
+        
 generatorOptions:
   # Without this, every edit renames the ConfigMap. The sidecar would then
   # briefly serve two copies of the same dashboard UID before the old one
