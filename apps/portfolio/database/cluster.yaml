@@ -27,3 +27,16 @@ spec:
       wal:
         compression: gzip
     retentionPolicy: "30d"
+    # Propagated by SetInheritedDataAndOwnership() onto every object the operator
+  # creates for this cluster — including the generated PodMonitor, which is the
+  # only reason this is here. kube-prom's podMonitorSelector requires
+  # release=kube-prom and CNPG does not otherwise set it, so the PodMonitor is
+  # created, ArgoCD reports Synced, and nothing scrapes it.
+  #
+  # Side effect: the label also lands on pods, services, PVCs and secrets.
+  inheritedMetadata:
+    labels:
+      release: kube-prom
+
+  monitoring:
+    enablePodMonitor: true

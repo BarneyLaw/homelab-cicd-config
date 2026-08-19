@@ -1,0 +1,143 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cnpg-alerts
+  # Lives in monitoring even though the parent Application targets cnpg-system.
+  # Same placement as the Traefik and Longhorn rules.
+  namespace: monitoring
+  labels:
+    release: kube-prom
+spec:
+  groups:
+    - name: cnpg.instance
+      rules:
+        # Built-in instance-manager metrics (cnpg_collector_*), NOT the query
+        # ConfigMap ones. Deliberately avoiding
+        # cnpg_collector_last_available_backup_timestamp /
+        # last_failed_backup_timestamp / first_recoverability_point — all three
+        # are marked Deprecated in pg_collector.go upstream. Most CNPG alert
+        # examples on the internet are built on them.
+        - alert: CNPGInstanceDown
+          expr: cnpg_collector_up == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: CNPG instance {{ $labels.pod }} cannot reach Postgres
+            description: >-
+              The instance manager in {{ $labels.namespace }}/{{ $labels.pod }}
+              has been unable to connect to its Postgres backend for 5 minutes.
+              Check `kubectl logs -n {{ $labels.namespace }} {{ $labels.pod }}`
+              and the Cluster status.
+
+        - alert: CNPGCollectorErroring
+          expr: cnpg_collector_last_collection_error == 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: CNPG metric collection failing on {{ $labels.pod }}
+            description: >-
+              The exporter's last scrape of Postgres returned an error. Metrics
+              from this instance are stale or partial — treat other CNPG alerts
+              here as unreliable until resolved.
+
+        # Canary. Mirrors LonghornMetricsMissing: catches the PodMonitor losing
+        # its `release: kube-prom` label on a chart bump, or inheritedMetadata
+        # being dropped from a Cluster spec. Without this, the whole group above
+        # silently stops evaluating and everything looks green.
+        - alert: CNPGMetricsMissing
+          expr: absent(cnpg_collector_up)
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: No CNPG instance metrics are being scraped
+            description: >-
+              cnpg_collector_up has disappeared entirely. Check that each Cluster
+              still has spec.monitoring.enablePodMonitor and
+              spec.inheritedMetadata.labels.release=kube-prom, and that the
+              PodMonitors carry that label:
+              `kubectl get podmonitor -A --show-labels`.
+
+    - name: cnpg.archiving
+      rules:
+        # The highest-value group here. Garage lives on nebula's Compose stack —
+        # outside K3s, outside ArgoCD, outside anything else that alerts. If it
+        # goes away, portfolio-db's PITR window silently stops advancing and
+        # nothing else in the cluster notices.
+        #
+        # `for:` widened well past kured's cordon/drain/reboot window: a nebula
+        # patch cycle legitimately stalls WAL shipping for several minutes.
+        - alert: CNPGWALArchivingStalled
+          expr: cnpg_collector_pg_wal_archive_status{value="ready"} > 20
+          for: 20m
+          labels:
+            severity: critical
+          annotations:
+            summary: WAL segments piling up unarchived on {{ $labels.pod }}
+            description: >-
+              {{ $value }} WAL segments are sitting in archive_status/ waiting to
+              ship. Garage on nebula (192.168.1.248:3900) is the usual cause —
+              check the Compose stack is up and the bucket is reachable. PITR
+              coverage is not advancing while this is firing, and pg_wal will
+              grow until the PVC fills.
+
+        - alert: CNPGWALArchiveFailing
+          expr: increase(cnpg_pg_stat_archiver_failed_count[15m]) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: WAL archive command erroring on {{ $labels.pod }}
+            description: >-
+              archive_command has failed at least once in the last 15 minutes.
+              Check barman-cloud errors in the instance logs — region mismatch
+              and credential-secret drift are the two we've hit before.
+
+        - alert: CNPGNoRecentArchival
+          expr: cnpg_pg_stat_archiver_seconds_since_last_archival > 3600
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: No successful WAL archive from {{ $labels.pod }} in over an hour
+            description: >-
+              On a low-write database this can be benign (nothing to ship), so
+              treat it as a prompt to confirm rather than a hard failure. Read it
+              alongside CNPGWALArchivingStalled — that one firing too means it is
+              real.
+
+    - name: cnpg.saturation
+      rules:
+        # penny-dev-db is capped at max_connections=50 and has an external
+        # consumer over the LoadBalancer on deus. This is the one most likely
+        # to actually fire.
+        - alert: CNPGConnectionsHigh
+          expr: >-
+            sum by (namespace, pod) (cnpg_backends_total)
+              /
+            max by (namespace, pod) (cnpg_pg_settings_setting{name="max_connections"})
+              > 0.8
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: >-
+              {{ $labels.namespace }}/{{ $labels.pod }} is at
+              {{ $value | humanizePercentage }} of max_connections
+            description: >-
+              Connection pool nearing exhaustion. Once it hits 100% new clients
+              get "too many clients already" and the app fails, not degrades.
+
+        - alert: CNPGLongRunningTransaction
+          expr: max by (namespace, pod, datname) (cnpg_backends_max_tx_duration_seconds) > 3600
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Transaction open over an hour on {{ $labels.namespace }}/{{ $labels.pod }}
+            description: >-
+              A transaction in {{ $labels.datname }} has been open for
+              {{ $value | humanizeDuration }}. Long transactions block vacuum and
+              cause table bloat. Usually a leaked connection from a dev client.

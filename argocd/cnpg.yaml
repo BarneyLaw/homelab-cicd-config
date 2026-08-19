@@ -6,13 +6,23 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://cloudnative-pg.github.io/charts
-    chart: cloudnative-pg
-    targetRevision: 0.23.x   # pin to current stable
-    helm:
-      values: |
-        nodeSelector:
-          kubernetes.io/hostname: deus
+    - repoURL: https://cloudnative-pg.github.io/charts
+      chart: cloudnative-pg
+      targetRevision: 0.23.x   # pin to current stable
+      helm:
+        releaseName: cnpg
+        values: |
+          nodeSelector:
+            kubernetes.io/hostname: deus
+          monitoring:
+            podMonitorEnabled: true
+            podMonitorAdditionalLabels:
+              release: kube-prom
+
+    - repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
+      targetRevision: main
+      path: apps/cnpg-extras
+    
   destination:
     server: https://kubernetes.default.svc
     namespace: cnpg-system
