@@ -5,24 +5,30 @@ metadata:
   namespace: argocd
 spec:
   project: default
-  source:
+  sources:
     - repoURL: https://cloudnative-pg.github.io/charts
       chart: cloudnative-pg
       targetRevision: 0.23.x   # pin to current stable
       helm:
-        releaseName: cnpg
+        releaseName: cnpg      # match existing release → adopt, not duplicate
         values: |
           nodeSelector:
             kubernetes.io/hostname: deus
           monitoring:
+            # Operator's own controller-runtime metrics. The chart exposes
+            # podMonitorAdditionalLabels specifically so the generated
+            # PodMonitor can satisfy kube-prom's podMonitorSelector.
             podMonitorEnabled: true
             podMonitorAdditionalLabels:
               release: kube-prom
+          # The chart CAN create the CNPG Grafana dashboard, but it lands in
+          # cnpg-system and our Grafana sidecar only watches `monitoring`.
+          # Dashboard goes through monitoring-extras instead. Leave this false.
 
     - repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
       targetRevision: main
       path: apps/cnpg-extras
-    
+
   destination:
     server: https://kubernetes.default.svc
     namespace: cnpg-system
