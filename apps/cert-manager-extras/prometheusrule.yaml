@@ -1,0 +1,204 @@
+# apps/cert-manager-extras/prometheusrule.yaml
+#
+# Lives in `monitoring` even though the parent Application targets
+# `cert-manager`. Same placement as the Traefik, Longhorn and CNPG rules.
+#
+# Metric names verified against cert-manager v1.16.2 (pkg/metrics/metrics.go).
+# Everything is prefixed `certmanager_`; the ACME client metrics carry an extra
+# `http_` subsystem segment (certmanager_http_acme_client_request_count).
+#
+# LABEL WARNING — read before editing any expression here:
+#   certmanager_certificate_* exposes `namespace` = the Certificate's namespace.
+#   Kubernetes SD also sets `namespace` = cert-manager (where the pod runs).
+#   With honorLabels: false (our setting) the scraped one is renamed, so:
+#       namespace           -> "cert-manager"        (always)
+#       exported_namespace  -> "kube-system"         (the Certificate)
+#   Rules below use exported_namespace. Upstream examples use `namespace` and
+#   will look correct while silently grouping everything into one bucket.
+#
+# What is NOT covered here: cainjector. Its container exposes :9402, but the
+# chart ships no Service for it, and a ServiceMonitor selects Services. Its
+# metrics are controller-runtime workqueue noise, so this is an accepted gap —
+# switching to prometheus.podmonitor would pick it up but deletes the metrics
+# Service the ServiceMonitor depends on (the two are mutually exclusive).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cert-manager-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prom
+spec:
+  groups:
+    - name: cert-manager.certificates
+      rules:
+        # certmanager_certificate_ready_status is label-based, not an enum:
+        # one series per condition value, 1 for the live one and 0 for the rest.
+        #   certmanager_certificate_ready_status{condition="True"}  1
+        #   certmanager_certificate_ready_status{condition="False"} 0
+        # So `{condition="True"} == 0` is the correct "not ready" test, and the
+        # series exists whichever state the cert is in. Same shape as Longhorn's
+        # longhorn_volume_robustness.
+        #
+        # `for: 30m` because a genuine issuance is legitimately not-ready for a
+        # few minutes: DNS-01 has to write the TXT record, wait for propagation,
+        # and let LE poll it. Renewal happens 30 days out, so 30 minutes of
+        # not-ready is never urgent.
+        - alert: CertManagerCertificateNotReady
+          expr: |
+            max by (name, exported_namespace, issuer_name) (
+              certmanager_certificate_ready_status{condition="True"}
+            ) == 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: >-
+              Certificate {{ $labels.exported_namespace }}/{{ $labels.name }}
+              is not Ready
+            description: >-
+              Issued by {{ $labels.issuer_name }}. Check the chain:
+              `kubectl describe certificate -n {{ $labels.exported_namespace }}
+              {{ $labels.name }}`, then the CertificateRequest, Order and
+              Challenge it owns. A stuck Challenge is almost always the
+              Cloudflare API token (cloudflare-api-token in cert-manager) or a
+              dnsZones selector that no longer matches.
+
+        # Renewal is due but has not happened. This is the early-warning alert:
+        # cert-manager renews at 2/3 of lifetime (30 days out on a 90-day LE
+        # cert), so this fires ~29 days before anything actually breaks, while
+        # the expiry alerts below are the late backstop.
+        - alert: CertManagerCertificateRenewalOverdue
+          expr: certmanager_certificate_renewal_timestamp_seconds - time() < 0
+          for: 3h
+          labels:
+            severity: warning
+          annotations:
+            summary: >-
+              Renewal overdue for {{ $labels.exported_namespace }}/{{ $labels.name }}
+            description: >-
+              The scheduled renewal time has passed and the certificate has not
+              been reissued. Expect CertManagerCertificateNotReady alongside
+              this. Plenty of runway left — but this is the point to fix it, not
+              at day 7.
+
+        # Renewal has been failing for over a week at this point.
+        - alert: CertManagerCertificateExpiringSoon
+          expr: (certmanager_certificate_expiration_timestamp_seconds - time()) / 86400 < 21
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: >-
+              {{ $labels.exported_namespace }}/{{ $labels.name }} expires in
+              {{ $value | humanizeDuration }}
+            description: >-
+              cert-manager should have renewed this 9+ days ago. Deliberately
+              using time() rather than certmanager_clock_time_seconds — that
+              metric is marked DEPRECATED in v1.16 (superseded by
+              certmanager_clock_time_seconds_gauge) and is what every upstream
+              example alert is still built on.
+
+        - alert: CertManagerCertificateExpiryCritical
+          expr: (certmanager_certificate_expiration_timestamp_seconds - time()) / 86400 < 7
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            summary: >-
+              {{ $labels.exported_namespace }}/{{ $labels.name }} expires in
+              {{ $value | humanizeDuration }}
+            description: >-
+              If this is lab-packetcraft-wildcard, the entire *.lab plane goes
+              dark on expiry and there is no click-through: .dev is
+              HSTS-preloaded, so browsers hard-fail rather than warn. Headlamp,
+              Grafana and ArgoCD all become unreachable at once.
+
+        # Canary. Safe as an absent() check because the cluster always holds at
+        # least lab-packetcraft-wildcard — if the series vanishes, the cause is
+        # the scrape, not an empty cluster. Catches the ServiceMonitor losing
+        # `release: kube-prom` on a chart bump, which is the exact failure mode
+        # that leaves every alert above evaluating green forever.
+        - alert: CertManagerMetricsMissing
+          expr: absent(certmanager_certificate_ready_status)
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: cert-manager certificate metrics absent from Prometheus
+            description: >-
+              Either the controller is down or it is no longer being scraped.
+              Compare labels against the selector:
+              `kubectl get servicemonitor -n cert-manager --show-labels` vs
+              `kubectl get prometheus -n monitoring -o jsonpath='{.items[0].spec.serviceMonitorSelector}'`.
+
+    - name: cert-manager.acme
+      rules:
+        # Let's Encrypt rate limits are per-week and unforgiving: 5 duplicate
+        # certificates per week, 50 certificates per registered domain per week,
+        # 5 failed validations per account/hostname/hour. Hitting one means no
+        # new issuance until the window rolls — worth knowing immediately rather
+        # than discovering it during an outage.
+        - alert: CertManagerACMERateLimited
+          expr: increase(certmanager_http_acme_client_request_count{status="429"}[1h]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Let's Encrypt is rate-limiting cert-manager ({{ $labels.host }})
+            description: >-
+              A 429 came back from the ACME endpoint {{ $labels.path }}. Do not
+              retry into it — delete the failing Order and wait out the window.
+              If this was hit while experimenting, switch the ClusterIssuer to
+              the staging endpoint before retrying.
+
+        # Threshold, not `> 0`: badNonce (400) is a normal, self-healing part of
+        # the ACME protocol and cert-manager retries it transparently. Alerting
+        # on any single 4xx would flap on healthy renewals. 10+ errors in an hour
+        # is a real failure loop.
+        - alert: CertManagerACMEErrors
+          expr: |
+            sum(increase(certmanager_http_acme_client_request_count{status=~"4..|5..",status!="429"}[1h])) > 10
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: ACME client erroring against Let's Encrypt
+            description: >-
+              {{ $value }} non-429 ACME errors in the last hour. Check the
+              controller logs for the order/challenge that is looping. Sustained
+              failures also burn the "5 failed validations per hour" budget,
+              which will turn this into a 429.
+
+    - name: cert-manager.controller
+      rules:
+        - alert: CertManagerControllerSyncErrors
+          expr: sum by (controller) (rate(certmanager_controller_sync_error_count[15m])) > 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: cert-manager {{ $labels.controller }} controller is erroring on sync
+            description: >-
+              Sustained sync() errors in the {{ $labels.controller }} controller.
+              Which controller it is narrows the fault fast: `challenges` and
+              `orders` point at Cloudflare/LE, `certificates-*` at the resource
+              itself, `clusterissuers` at the API token secret.
+
+        # Deliberately keyed on `namespace` (the target label, always
+        # "cert-manager") rather than a job regex — jobLabel resolution depends
+        # on chart internals and silently changes what `job` looks like across
+        # upgrades. This selects the controller and webhook targets and nothing
+        # else. Widened past kured's cordon/drain/reboot window.
+        - alert: CertManagerTargetDown
+          expr: up{namespace="cert-manager"} == 0
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: cert-manager target {{ $labels.service }} is down
+            description: >-
+              If this is the webhook, every cert-manager API write is being
+              rejected at admission — including ArgoCD trying to sync
+              Certificates — and the failure surfaces as an unrelated-looking
+              webhook timeout on apply.

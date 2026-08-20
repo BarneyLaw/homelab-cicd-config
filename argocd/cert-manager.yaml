@@ -1,4 +1,8 @@
 # argocd/cert-manager.yaml
+#
+# Converted from single-source to the multi-source shape used by cnpg:
+# upstream chart + a second source carrying the hand-authored monitoring
+# objects in apps/cert-manager-extras/.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -6,14 +10,47 @@ metadata:
   namespace: argocd
 spec:
   project: default
-  source:
-    repoURL: https://charts.jetstack.io
-    chart: cert-manager
-    targetRevision: v1.16.2          # check latest; pin it
-    helm:
-      values: |
-        crds:
-          enabled: true
+  sources:
+    - repoURL: https://charts.jetstack.io
+      chart: cert-manager
+      targetRevision: v1.16.2          # check latest; pin it
+      helm:
+        releaseName: cert-manager      # match the existing release → adopt, not duplicate
+        values: |
+          # DO NOT flip this to false. The chart owns the CRDs; with
+          # prune: true, dropping them deletes the CRDs, which cascades to
+          # every Certificate/ClusterIssuer and then garbage-collects the
+          # tls secrets they own — including lab-packetcraft-wildcard-tls.
+          crds:
+            enabled: true
+
+          prometheus:
+            enabled: true
+            servicemonitor:
+              enabled: true
+              interval: 30s
+              scrapeTimeout: 10s
+              # kube-prom's serviceMonitorSelector. Without this the monitor is
+              # created, ArgoCD reports Healthy, and nothing is ever scraped.
+              labels:
+                release: kube-prom
+              # Left at the default (false) deliberately.
+              #
+              # certmanager_certificate_* carries a `namespace` label meaning
+              # "the namespace of the Certificate resource" (kube-system for the
+              # wildcard). That collides with the Kubernetes SD target label
+              # `namespace`, which means "where cert-manager runs".
+              #
+              # honorLabels: false keeps the target label authoritative and moves
+              # the Certificate's namespace to `exported_namespace`. Every rule
+              # and dashboard panel here uses `exported_namespace` accordingly.
+              # If you ever flip this to true, all of those break silently.
+              honorLabels: false
+
+    - repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
+      targetRevision: main
+      path: apps/cert-manager-extras
+
   destination:
     server: https://kubernetes.default.svc
     namespace: cert-manager
