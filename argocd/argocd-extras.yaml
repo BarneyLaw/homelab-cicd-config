@@ -1,0 +1,32 @@
+# Separate Application rather than a third source on argocd/argocd.yaml.
+#
+# argocd/argocd.yaml manages ArgoCD's own Helm release and deliberately has NO
+# automated syncPolicy — self-management is kept manual so a bad values change
+# can't roll the controller out from under itself. Hanging the alert rules off
+# that Application would inherit manual sync, meaning alerting changes would sit
+# unapplied until someone remembered to sync ArgoCD itself. Exactly the drift
+# class these alerts exist to catch.
+#
+# Split out, the rules get prune + selfHeal like every other -extras app.
+#
+# REMINDER: argocd/ is not watched by any app-of-apps. This file does nothing
+# until you run `kubectl apply -f argocd/argocd-extras.yaml`.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-extras
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
+    targetRevision: main
+    path: apps/argocd-extras
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+ 

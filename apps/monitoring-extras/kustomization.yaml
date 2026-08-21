@@ -44,6 +44,13 @@ configMapGenerator:
     options:
       labels:
         grafana_dashboard: "1"
+  - name: grafana-dashboard-argocd
+    files:
+      - dashboards/argocd.json
+    options:
+      labels:
+        grafana_dashboard: "1"
+
         
 generatorOptions:
   # Without this, every edit renames the ConfigMap. The sidecar would then

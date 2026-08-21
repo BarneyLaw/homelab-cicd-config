@@ -1,0 +1,284 @@
+# Lives in the monitoring namespace even though the parent Application targets
+# `argocd` — same placement as the Traefik, Longhorn, CNPG and cloudflared rules.
+#
+# Metric names and label sets verified against argo-cd v3.4.3 source
+# (controller/metrics/metrics.go, controller/metrics/clustercollector.go,
+# reposerver/metrics/metrics.go), not against blog posts. Two label details that
+# most published ArgoCD alert sets get wrong on v3.x:
+#   - argocd_app_info's `operation` label is "" | "sync" | "delete" (lowercase),
+#     not "Sync".
+#   - argocd_app_sync_total gained a `dry_run` label. Selectors below use
+#     dry_run!="true" rather than dry_run="false" so the rules keep matching if
+#     the label is ever dropped again.
+#
+# The recurring failure mode this whole file exists to catch: ArgoCD reports
+# Synced/Healthy based on schema validity, not on whether anything works. These
+# alerts watch the reconciliation loop itself.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: argocd-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prom
+spec:
+  groups:
+    - name: argocd.availability
+      rules:
+        # Every argocd scrape target: controller, server, repo-server,
+        # applicationset-controller. All four are pinned to deus, so a deus
+        # reboot takes them out together — hence the wide `for:`, which must
+        # clear kured's cordon/drain/reboot/uncordon window.
+        - alert: ArgoCDComponentDown
+          expr: up{namespace="argocd"} == 0
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: ArgoCD component {{ $labels.job }} is not scrapeable
+            description: >-
+              Prometheus cannot reach {{ $labels.job }} in argocd. If this is the
+              application-controller, nothing in the cluster is being reconciled
+              and git drift is accumulating silently. All ArgoCD components are
+              pinned to deus — check the node first.
+
+        # Canary. Mirrors LonghornMetricsMissing / CNPGMetricsMissing. If the
+        # controller dies outright, every argocd_app_info series disappears and
+        # the entire argocd.apps group below stops evaluating rather than
+        # firing — everything looks green. Also catches the ServiceMonitor
+        # losing its `release: kube-prom` label on a chart bump.
+        - alert: ArgoCDMetricsMissing
+          expr: absent(argocd_app_info)
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: No ArgoCD application metrics are being scraped
+            description: >-
+              argocd_app_info has disappeared entirely. Confirm
+              controller.metrics.enabled AND
+              controller.metrics.serviceMonitor.enabled are both true in
+              apps/argocd/values-argocd.yaml, and that the ServiceMonitor still
+              carries release=kube-prom:
+              `kubectl get servicemonitor -n argocd --show-labels`.
+
+        # The controller's connection to the cluster it manages. Distinct from
+        # the pod being up: the pod can be running fine while its cluster cache
+        # is broken, at which point sync_status goes Unknown across the board.
+        - alert: ArgoCDClusterConnectionDown
+          expr: argocd_cluster_connection_status == 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: ArgoCD cannot connect to cluster {{ $labels.server }}
+            description: >-
+              The application-controller has lost its connection to
+              {{ $labels.server }}. Reconciliation is stalled and app health
+              will drift to Unknown. Check controller logs and the cluster
+              secret in the argocd namespace.
+
+        # Redis is a single replica on deus and is a hard dependency of the
+        # controller and repo-server (manifest cache + app state). Emitted by
+        # the clients, so this fires even if the redis pod is scraping fine.
+        - alert: ArgoCDRedisErrors
+          expr: sum(rate(argocd_redis_request_total{failed="true"}[10m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: ArgoCD Redis requests are failing
+            description: >-
+              {{ $value | printf "%.2f" }} failed Redis ops/sec. The controller
+              falls back to re-rendering manifests on every reconcile, so expect
+              repo-server load and reconcile latency to climb. Redis is a single
+              replica on deus with no persistence — a restart is expected to
+              cause a brief burst here.
+
+    - name: argocd.apps
+      rules:
+        # Degraded = the workload itself is broken (CrashLoopBackOff, failed
+        # health check), not that ArgoCD is broken. 20m clears a kured reboot
+        # plus pod rescheduling.
+        - alert: ArgoCDAppDegraded
+          expr: argocd_app_info{health_status="Degraded"} == 1
+          for: 20m
+          labels:
+            severity: critical
+          annotations:
+            summary: ArgoCD application {{ $labels.name }} is Degraded
+            description: >-
+              {{ $labels.name }} (project {{ $labels.project }}, dest
+              {{ $labels.dest_namespace }}) has been Degraded for 20 minutes.
+              `argocd app get {{ $labels.name }}` shows which resource is
+              failing.
+
+        # Missing = resources declared in git are absent from the cluster.
+        # Unknown = ArgoCD can't determine health, usually a cluster-cache or
+        # repo problem rather than an app problem.
+        - alert: ArgoCDAppHealthUnknown
+          expr: argocd_app_info{health_status=~"Missing|Unknown"} == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: ArgoCD application {{ $labels.name }} health is {{ $labels.health_status }}
+            description: >-
+              Missing means declared resources are not in the cluster (often a
+              CRD not yet installed, or a namespace that was never created).
+              Unknown usually points at the cluster cache or repo access rather
+              than the app itself — check ArgoCDClusterConnectionDown and the
+              argocd.repo group before digging into the app.
+
+        # Scoped to autosync apps deliberately. An app with automated sync that
+        # is STILL OutOfSync after 30 minutes is not "waiting to be synced" —
+        # reconciliation is actively failing, or a sync hook is wedged. The
+        # GitHub webhook on homelab-cicd-config means normal syncs land in
+        # seconds, so 30m is generous.
+        - alert: ArgoCDAppOutOfSync
+          expr: argocd_app_info{sync_status="OutOfSync", autosync_enabled="true"} == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: Autosync app {{ $labels.name }} stuck OutOfSync
+            description: >-
+              {{ $labels.name }} has automated sync enabled but has not converged
+              in 30 minutes. Look at the app's conditions for a SyncError —
+              ServerSideApply conflicts and failed pre-sync hooks are the two
+              that produce exactly this shape.
+
+        # The manual-sync counterpart, deliberately slow and low-severity. This
+        # is the alert for the known drift class: `argocd/` is not watched by an
+        # app-of-apps, and the `argocd` Application itself has no automated
+        # syncPolicy, so both drift silently and indefinitely. A daily nudge is
+        # the point; it is not an incident.
+        - alert: ArgoCDAppOutOfSyncManual
+          expr: argocd_app_info{sync_status="OutOfSync", autosync_enabled="false"} == 1
+          for: 24h
+          labels:
+            severity: info
+          annotations:
+            summary: Manual-sync app {{ $labels.name }} has been OutOfSync for a day
+            description: >-
+              {{ $labels.name }} has no automated syncPolicy, so it will stay
+              OutOfSync until someone runs `argocd app sync {{ $labels.name }}`.
+              Expected briefly after a values change; a day means it was
+              forgotten. Diff first: `argocd app diff {{ $labels.name }}`.
+
+        - alert: ArgoCDSyncFailing
+          expr: >-
+            sum by (namespace, name, project) (
+              increase(argocd_app_sync_total{phase=~"Failed|Error", dry_run!="true"}[30m])
+            ) > 2
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: ArgoCD sync retries failing for {{ $labels.name }}
+            description: >-
+              {{ $value | printf "%.0f" }} failed sync attempts in 30 minutes.
+              Repeated failures mean the controller is retrying a manifest the
+              API server keeps rejecting — CRD annotation size limits and
+              pod-level securityContext field errors have both produced this
+              before, and neither shows up as anything but a retry loop.
+
+        # `operation` is set while a sync or delete is actually in flight. A
+        # sync that has been in flight for 30 minutes is wedged — almost always
+        # a sync-wave hook Job that never completes (the portfolio migration Job
+        # is the candidate here).
+        - alert: ArgoCDAppStuckOperation
+          expr: argocd_app_info{operation="sync"} == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: ArgoCD sync operation on {{ $labels.name }} has not finished
+            description: >-
+              A sync has been running for 30 minutes. Check for a hook Job stuck
+              Pending or looping:
+              `kubectl get jobs -n {{ $labels.dest_namespace }}`. Terminate with
+              `argocd app terminate-op {{ $labels.name }}` once diagnosed.
+
+    - name: argocd.repo
+      rules:
+        # Highest-value pair in this file. These counters increment when the
+        # repo-server cannot talk to GitHub at all — expired repo credentials,
+        # a revoked PAT, a renamed repo, or GitHub being down. The symptom
+        # without them is subtle: apps go sync_status=Unknown and simply stop
+        # updating, while every pod in the cluster stays perfectly healthy.
+        - alert: ArgoCDGitLsRemoteFailing
+          expr: increase(argocd_git_lsremote_fail_total[15m]) > 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: ArgoCD cannot reach git repo {{ $labels.repo }}
+            description: >-
+              ls-remote against {{ $labels.repo }} is failing, so ArgoCD cannot
+              see new commits. Nothing will deploy until this clears. Check repo
+              credentials first — this is what an expired ArgoCD read PAT looks
+              like from the metrics side.
+
+        - alert: ArgoCDGitFetchFailing
+          expr: increase(argocd_git_fetch_fail_total[15m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: ArgoCD git fetch failing for {{ $labels.repo }}
+            description: >-
+              ArgoCD can see the repo but cannot fetch revision
+              {{ $labels.revision }}. A force-push that rewrote history, or a
+              targetRevision pointing at a branch or tag that no longer exists.
+
+        - alert: ArgoCDRepoServerBacklog
+          expr: argocd_repo_pending_request_total > 3
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: repo-server backlog of {{ $value }} on {{ $labels.repo }}
+            description: >-
+              Manifest generation requests are queuing. Helm-based Applications
+              (kube-prometheus-stack, longhorn, argo-cd, cnpg) are the expensive
+              ones — each render pulls and templates a chart. Sustained backlog
+              means syncs are slow, not broken.
+
+    - name: argocd.performance
+      rules:
+        # argocd_app_reconcile is a histogram of full reconcile duration.
+        # Baseline here is well under a second; tens of seconds means the
+        # cluster cache is thrashing or repo-server is saturated.
+        - alert: ArgoCDReconciliationSlow
+          expr: >-
+            histogram_quantile(0.99,
+              sum by (le, dest_server) (rate(argocd_app_reconcile_bucket[10m]))
+            ) > 60
+          for: 20m
+          labels:
+            severity: warning
+          annotations:
+            summary: ArgoCD p99 reconcile time is {{ $value | humanizeDuration }}
+            description: >-
+              Reconciliation is taking long enough that drift correction and
+              webhook-triggered deploys will feel broken. Usual causes: Redis
+              unavailable (see ArgoCDRedisErrors), repo-server backlog, or the
+              controller being CPU-starved on deus.
+
+        # GATED — enable after confirming the queue name on a live controller:
+        #   kubectl port-forward -n argocd svc/argocd-application-controller-metrics 8082:8082
+        #   curl -s localhost:8082/metrics | grep workqueue_depth
+        # The controller image is distroless, so port-forward rather than
+        # kubectl exec. Queue names have been renamed across ArgoCD majors; a
+        # wrong name here is a permanently silent rule, not an error.
+        #
+        # - alert: ArgoCDReconcileQueueBacklog
+        #   expr: workqueue_depth{namespace="argocd", name="app_reconciliation_queue"} > 10
+        #   for: 15m
+        #   labels:
+        #     severity: warning
+        #   annotations:
+        #     summary: "ArgoCD reconciliation queue depth {{ $value }}"
+        #     description: >-
+        #       The controller cannot keep up with queued app reconciliations.

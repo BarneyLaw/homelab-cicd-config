@@ -2,26 +2,107 @@ configs:
   params:
     server.insecure: true          # THIS is where the insecure flag belongs
 
+# ---------------------------------------------------------------------------
+# Metrics
+#
+# Every component below needs BOTH:
+#   metrics.enabled: true                  -> creates the -metrics Service
+#   metrics.serviceMonitor.enabled: true   -> creates the ServiceMonitor
+# Enabling only the first gives you an endpoint nothing scrapes; enabling only
+# the second gives you a ServiceMonitor pointing at a Service that doesn't
+# exist. Neither failure surfaces in ArgoCD — the app stays Synced/Healthy.
+#
+# `release: kube-prom` on every ServiceMonitor is mandatory. kube-prom's
+# serviceMonitorSelector is {matchLabels: {release: kube-prom}}; without it the
+# object is created, ArgoCD is green, and nothing is ever scraped.
+#
+# honorLabels deliberately left at the chart default (false). argocd_app_info
+# and argocd_app_reconcile both carry their own `namespace` label meaning "the
+# Application's namespace", which collides with the ServiceMonitor's target
+# `namespace` label. Today both are `argocd` so the collision is invisible. If
+# apps-in-any-namespace is ever enabled, the metric's label gets renamed to
+# `exported_namespace` and every by-namespace query silently reports `argocd`
+# for everything — same class of bug as the Traefik per-backend `service` label.
+# ---------------------------------------------------------------------------
+
 controller:
   nodeSelector:
     kubernetes.io/hostname: deus
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      additionalLabels:
+        release: kube-prom
+    applicationLabels:
+      # Would add an argocd_app_labels series per Application. Off: we don't
+      # label Applications with anything worth slicing dashboards by yet.
+      enabled: false
+    rules:
+      # The chart can ship its own PrometheusRule, but it would land in the
+      # `argocd` namespace and its examples are the generic upstream set.
+      # Alerts are hand-authored in apps/argocd-extras/ instead, matching
+      # longhorn-extras / cnpg-extras / cloudflared.
+      enabled: false
 
 redis:
   nodeSelector:
     kubernetes.io/hostname: deus
+  # redis.metrics.enabled adds a redis_exporter sidecar. Not enabled: the
+  # signal that actually matters (is Redis serving the controller?) is already
+  # covered by argocd_redis_request_total{failed="true"}, which the controller
+  # and repo-server emit themselves. The exporter would add a container for
+  # keyspace stats we have no use for.
 
 repoServer:
   nodeSelector:
     kubernetes.io/hostname: deus
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      additionalLabels:
+        release: kube-prom
 
 server:
   nodeSelector:
     kubernetes.io/hostname: deus
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      additionalLabels:
+        release: kube-prom
 
 dex:
   nodeSelector:
     kubernetes.io/hostname: deus
+  # dex.metrics left off — no SSO configured, so dex is an idle pod. Turn on
+  # only if/when an OIDC provider is wired up.
 
 applicationSet:
   nodeSelector:
     kubernetes.io/hostname: deus
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      additionalLabels:
+        release: kube-prom
+
+notifications:
+  nodeSelector:
+    kubernetes.io/hostname: deus
+  # notifications.metrics left off — the controller runs but no triggers or
+  # subscriptions are configured, so argocd_notifications_* would be flat zero.
+  # Enable alongside the first real notification trigger:
+  # metrics:
+  #   enabled: true
+  #   serviceMonitor:
+  #     enabled: true
+  #     additionalLabels:
+  #       release: kube-prom
