@@ -5,3 +5,4 @@ kind: Kustomization
 resources:
   - helmchartconfig.yaml
   - prometheusrule.yaml
+  - prometheusrule-alert.yaml

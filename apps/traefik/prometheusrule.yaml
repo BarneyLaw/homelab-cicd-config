@@ -54,3 +54,33 @@ spec:
 
         - record: traefik:config_reloads:increase10m
           expr: increase(traefik_config_reloads_total[10m])
+
+    - name: traefik.entrypoint.sli
+      interval: 30s
+      rules:
+        # Entrypoint-level counters see EVERY request that enters Traefik,
+        # including ones that match no router. Service-level counters only see
+        # requests that reached a backend. The difference is the routing gap.
+        - record: traefik:entrypoint_requests:rate5m
+          expr: sum by (entrypoint) (rate(traefik_entrypoint_requests_total[5m]))
+
+        # Requests that entered but never reached any service. A discarded
+        # router (unresolvable backend reference) shows up here and NOWHERE
+        # else — not in ArgoCD, not in the service SLIs, which simply stop
+        # having a series for that route.
+        #
+        # clamp_min guards the scrape-skew case where service counters briefly
+        # lead entrypoint counters and the subtraction goes negative.
+        - record: traefik:unrouted_requests:rate5m
+          expr: |
+            clamp_min(
+              sum(rate(traefik_entrypoint_requests_total[5m]))
+                - sum(rate(traefik_service_requests_total[5m])),
+              0
+            )
+
+        - record: traefik:entrypoint_requests_5xx:rate5m
+          expr: |
+            sum by (entrypoint) (
+              rate(traefik_entrypoint_requests_total{code=~"5.."}[5m])
+            )

@@ -1,0 +1,243 @@
+# Alerts layered on the recording rules in prometheusrule.yaml. Split into a
+# second object for the same reason longhorn-extras splits them: recording rules
+# are cheap and stable, alerts get tuned. Separate files means a threshold change
+# never risks a typo in an SLI everything else depends on.
+#
+# Metric names verified against traefik v3.5.0 source (pkg/metrics/prometheus.go).
+#
+# THE BIG ONE — v3 removed the config-reload failure metrics:
+#   traefik_config_reloads_failure_total    (v2 only, GONE)
+#   traefik_config_last_reload_failure      (v2 only, GONE)
+# v3 ships only traefik_config_reloads_total and traefik_config_last_reload_success.
+# Most Traefik alert sets published online are still built on the v2 pair and are
+# permanently silent on v3 — same failure mode as Longhorn's `robustness == 3`.
+# There is NO direct signal for "Traefik rejected a config". The routing-gap rule
+# at the bottom of this file is the closest available proxy.
+#
+# `service` labels arrive as `<name>@kubernetescrd` because honorLabels: true is
+# set on the ServiceMonitor. Do not aggregate that label away.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: traefik-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prom
+spec:
+  groups:
+    - name: traefik.availability
+      rules:
+        # Traefik is the single routing brain for BOTH planes — the public
+        # cloudflared path and the tailnet admin path. It going away is not a
+        # degraded service, it is total ingress loss.
+        - alert: TraefikDown
+          expr: up{namespace="kube-system", job=~"traefik.*"} == 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: Traefik is not scrapeable — all ingress is down
+            description: >-
+              Both packetcraft.dev and lab.packetcraft.dev route through this
+              pod. Public traffic will show Cloudflare 502/1033; tailnet traffic
+              will simply refuse. Check the DaemonSet/Deployment in kube-system
+              and the HelmChartConfig — a malformed valuesContent produces
+              CrashLoopBackOff, which is what the buckets-as-YAML-sequence bug
+              did.
+
+        # Canary. traefik_config_last_reload_success is emitted unconditionally
+        # with no labels, so it is the one series guaranteed present whenever
+        # scraping works at all. Its absence means either total outage or the
+        # ServiceMonitor losing `release: kube-prom` on a K3s-packaged chart
+        # bump — the latter is silent everywhere else.
+        - alert: TraefikMetricsMissing
+          expr: absent(traefik_config_last_reload_success)
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: No Traefik metrics reaching Prometheus
+            description: >-
+              Every rule in traefik.* has stopped evaluating, so the dashboard
+              reads healthy by omission. Confirm the ServiceMonitor survived the
+              last chart bump:
+              `kubectl get servicemonitor -n kube-system --show-labels` and
+              check metrics.prometheus.service.enabled is still true in the
+              HelmChartConfig.
+
+        # K3s helm-controller reapplies the packaged chart on upgrade and can
+        # revert HelmChartConfig merges. Churn here means a provider is
+        # flapping — usually an Application syncing in a loop.
+        - alert: TraefikConfigChurn
+          expr: traefik:config_reloads:increase10m > 30
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Traefik reloaded config {{ $value | printf "%.0f" }} times in 10m
+            description: >-
+              Sustained reload churn on {{ $labels.pod }}. Look for an ArgoCD app
+              stuck in a sync loop rewriting IngressRoutes, or a Service whose
+              endpoints are flapping. Each reload briefly drops in-flight
+              requests.
+
+    - name: traefik.backends
+      rules:
+        # traefik_service_server_up{service,url} is a per-backend-URL gauge —
+        # the closest thing to a health check Traefik exposes. Catches an
+        # IngressRoute pointing at a Service with no ready endpoints, which
+        # otherwise only shows up as user-visible 502s.
+        - alert: TraefikServiceNoHealthyServers
+          expr: sum by (service) (traefik_service_server_up) == 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: Traefik service {{ $labels.service }} has no healthy backends
+            description: >-
+              Every backend URL for {{ $labels.service }} is down. Requests to
+              this route return 502. Check the Service has endpoints:
+              `kubectl get endpoints -A | grep <name>`. 10m clears a kured
+              cordon/drain cycle.
+
+        - alert: TraefikServiceServerDown
+          expr: traefik_service_server_up == 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Backend {{ $labels.url }} of {{ $labels.service }} is down
+            description: >-
+              One backend of a multi-replica service is unreachable. Traffic is
+              still served by the others, so this is capacity loss rather than
+              an outage — but a replica that stays down past a reboot window is
+              stuck, not rebooting.
+
+    - name: traefik.sli
+      rules:
+        # The `and ... > 0.1` traffic floor is load-bearing. The recording rule
+        # returns NaN at zero traffic (safe), but a service at 0.02 req/s that
+        # serves ONE 500 has a ratio of 1.0. Without the floor, every low-traffic
+        # admin route on the tailnet plane pages on a single stray error.
+        - alert: TraefikServiceErrorRatio
+          expr: >-
+            traefik_service:error_ratio:rate5m > 0.05
+              and traefik_service:requests:rate5m > 0.1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: >-
+              {{ $labels.service }} is returning
+              {{ $value | humanizePercentage }} 5xx
+            description: >-
+              Sustained server errors from {{ $labels.service }}. 5xx is
+              origin-side — the backend pod, not Traefik and not Cloudflare.
+              Cloudflare's own error pages (502/1033) never reach these counters
+              because they are generated at the edge.
+
+        - alert: TraefikServiceErrorRatioCritical
+          expr: >-
+            traefik_service:error_ratio:rate5m > 0.5
+              and traefik_service:requests:rate5m > 0.2
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: >-
+              {{ $labels.service }} is majority-failing
+              ({{ $value | humanizePercentage }} 5xx)
+            description: >-
+              More than half of requests are erroring. Treat as an outage of
+              that route.
+
+        # p99 from the recording rule, which already excludes websockets.
+        # Without that filter this alert would fire permanently on Headlamp,
+        # since websocket upgrades record connection lifetime, not latency.
+        - alert: TraefikServiceLatencyHigh
+          expr: >-
+            traefik_service:duration_seconds:p99_5m > 3
+              and traefik_service:requests:rate5m > 0.1
+          for: 20m
+          labels:
+            severity: warning
+          annotations:
+            summary: >-
+              {{ $labels.service }} p99 latency is
+              {{ $value | humanizeDuration }}
+            description: >-
+              Origin-side latency, measured Traefik-to-backend. For public
+              routes, add Cloudflare edge latency on top of this. Check whether
+              the backend pod landed on nebula or legion and whether the node is
+              under load.
+
+    - name: traefik.tls
+      rules:
+        # Deliberately NOT redundant with cert-manager-extras. cert-manager
+        # alerts on the Certificate resource and the Secret; this alerts on the
+        # cert Traefik is ACTUALLY SERVING. The gap between them is real: a
+        # renewed Secret that the TLSStore never picked up leaves cert-manager
+        # green while the wire still carries the expiring cert.
+        #
+        # `.dev` is HSTS-preloaded, so an expired cert on the tailnet plane is a
+        # hard browser refusal with no click-through. There is no degraded mode.
+        - alert: TraefikServedCertExpiring
+          expr: (traefik_tls_certs_not_after - time()) / 86400 < 14
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: >-
+              Cert served for {{ $labels.cn }} expires in
+              {{ $value | printf "%.1f" }} days
+            description: >-
+              Traefik is serving a cert with under two weeks left. If
+              cert-manager shows the Certificate as Ready, the renewal happened
+              but Traefik did not pick it up — check the TLSStore in
+              apps/cert-manager-issuer/ and restart Traefik to force a reload.
+
+        - alert: TraefikServedCertExpiringCritical
+          expr: (traefik_tls_certs_not_after - time()) / 86400 < 3
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            summary: >-
+              Cert served for {{ $labels.cn }} expires in
+              {{ $value | printf "%.1f" }} days
+            description: >-
+              Imminent TLS failure on an HSTS-preloaded domain. Every
+              lab.packetcraft.dev service becomes unreachable with no bypass.
+
+    - name: traefik.routing
+      rules:
+        # GATED — needs a baseline before enabling.
+        #
+        # This is the nearest available substitute for the missing v3 config-
+        # reload-failure metric, and it targets the documented failure mode:
+        # Traefik silently discards routers whose backend service reference does
+        # not resolve. The router vanishes, the IngressRoute stays green in
+        # ArgoCD, and requests for that Host fall through to Traefik's catch-all
+        # 404 — entering at the entrypoint but never reaching any service.
+        #
+        # traefik:unrouted_requests:rate5m (recording rule) measures that gap.
+        #
+        # A non-zero baseline is EXPECTED and must be measured first: the public
+        # plane gets constant scanner traffic hitting nonexistent hosts, and
+        # redirects and middleware rejections also count at the entrypoint only.
+        # Watch the recording rule for a week, then set the threshold above the
+        # observed 95th percentile of normal noise.
+        #
+        # - alert: TraefikUnroutedRequests
+        #   expr: traefik:unrouted_requests:rate5m > <BASELINE>
+        #   for: 20m
+        #   labels:
+        #     severity: warning
+        #   annotations:
+        #     summary: "{{ $value | printf \"%.2f\" }} req/s entering Traefik reach no service"
+        #     description: >-
+        #       Requests are hitting an entrypoint and matching no router. The
+        #       usual cause is a discarded router — an IngressRoute referencing a
+        #       Service that does not exist or has no port match. ArgoCD will not
+        #       show this. Check the Traefik dashboard or:
+        #       `kubectl logs -n kube-system deploy/traefik | grep -i "cannot create service"`
