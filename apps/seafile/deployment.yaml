@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seafile
+  namespace: seafile
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"   # after db + redis
+  labels:
+    app.kubernetes.io/name: seafile
+    app.kubernetes.io/component: server
+spec:
+  replicas: 1
+  # Same RWO reasoning as MariaDB. Also: two seafile-mc containers over one
+  # /shared would race on the ccnet/seaf-server pid files.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: seafile
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: seafile
+        app.kubernetes.io/component: server
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      # NO restrictive securityContext, deliberately. The seafile-mc entrypoint
+      # runs its own supervisor, writes into /shared, and starts nginx on :80 —
+      # it needs root inside the container. Locking it down the way
+      # portfolio-backend is locked down will not boot.
+      containers:
+        - name: seafile
+          # Pinned exactly as compose had it. NOT :13.0-latest — a moving tag
+          # means the entrypoint could run its schema-upgrade path against your
+          # live database on some future pod restart, unscheduled and unattended.
+          image: seafileltd/seafile-mc:13.0.19
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: seafile-env
+          env:
+            - name: SEAFILE_MYSQL_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: seafile
+                  key: mysql-seafile-password
+            - name: INIT_SEAFILE_MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: seafile
+                  key: mysql-root-password
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: seafile
+                  key: redis-password
+            # Signs internal service-to-service tokens. Rotated at cutover —
+            # safe only because every consumer restarts in the same window.
+            - name: JWT_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: seafile
+                  key: jwt-private-key
+            # compose set SEAFILE_AI_SECRET_KEY to the same value as
+            # JWT_PRIVATE_KEY. Carried across for parity even with AI disabled,
+            # so enabling it later doesn't surface a confusing auth failure.
+            - name: SEAFILE_AI_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: seafile
+                  key: jwt-private-key
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+          # Cold start runs ccnet, seaf-server, seahub and nginx in sequence.
+          # Generous startupProbe, then cheap liveness. Same endpoint compose
+          # was curling in its healthcheck.
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60        # 10 minutes
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              memory: 4Gi
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: seafile-data

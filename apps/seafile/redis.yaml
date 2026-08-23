@@ -1,0 +1,101 @@
+# Replaces memcached — Seafile 13 uses redis as the cache provider.
+#
+# SECURITY DELTA FROM COMPOSE: your .env has REDIS_PASSWORD empty. On the
+# `seafile-net` bridge that was defensible, since only the three stack
+# containers could reach it. A ClusterIP Service is reachable from every pod in
+# the cluster, including the code-server sandbox. So this gets a real password.
+#
+# Cache only — no persistence, no PVC, free placement on any node. `--save ''`
+# and `--appendonly no` stop redis writing RDB/AOF files it has no reason to keep.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seafile-redis
+  namespace: seafile
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/name: seafile
+    app.kubernetes.io/component: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: seafile
+      app.kubernetes.io/component: cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: seafile
+        app.kubernetes.io/component: cache
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          # Compose left this at bare `redis` (= :latest). Pinned here so a pod
+          # restart can't silently jump a major version.
+          image: redis:7.4-alpine
+          imagePullPolicy: IfNotPresent
+          command: ["redis-server"]
+          args:
+            - "--requirepass"
+            - "$(REDIS_PASSWORD)"
+            - "--save"
+            - ""
+            - "--appendonly"
+            - "no"
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: seafile
+                  key: redis-password
+          ports:
+            - name: redis
+              containerPort: 6379
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seafile-redis
+  namespace: seafile
+spec:
+  selector:
+    app.kubernetes.io/name: seafile
+    app.kubernetes.io/component: cache
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis

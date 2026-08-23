@@ -1,0 +1,69 @@
+# Adopting the existing Docker bind-mount targets in place. Confirmed backing:
+#
+#   tank/seafile      1000G quota  ->  /opt/seafile-data   (= SEAFILE_VOLUME)
+#   tank/seafile-db     25G quota  ->  /opt/seafile-mysql  (parent of SEAFILE_MYSQL_VOLUME)
+#
+# The /opt prefix is only a mountpoint — both are ZFS datasets, so snapshot
+# coverage carries over unchanged. Nothing moves; only the supervisor changes
+# from dockerd to kubelet.
+#
+# Capacity mirrors the dataset quotas. For `local` PVs the value is advisory
+# (ZFS does the enforcing), so matching the quota keeps `kubectl get pv` honest.
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: seafile-data
+  labels:
+    app.kubernetes.io/name: seafile
+    app.kubernetes.io/component: data
+spec:
+  capacity:
+    storage: 1000Gi
+  accessModes: ["ReadWriteOnce"]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nebula-local
+  volumeMode: Filesystem
+  local:
+    path: /opt/seafile-data
+  claimRef:
+    namespace: seafile
+    name: seafile-data
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: ["nebula"]
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: seafile-mysql
+  labels:
+    app.kubernetes.io/name: seafile
+    app.kubernetes.io/component: database
+spec:
+  capacity:
+    storage: 25Gi
+  accessModes: ["ReadWriteOnce"]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nebula-local
+  volumeMode: Filesystem
+  local:
+    # NOTE the /db suffix. The dataset mounts at /opt/seafile-mysql, but the
+    # compose bind mount is the `db` subdirectory inside it. Mounting the parent
+    # hands MariaDB an empty datadir and it initialises a fresh one — silently,
+    # with ArgoCD reporting Healthy throughout.
+    path: /opt/seafile-mysql/db
+  claimRef:
+    namespace: seafile
+    name: seafile-mysql
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: ["nebula"]

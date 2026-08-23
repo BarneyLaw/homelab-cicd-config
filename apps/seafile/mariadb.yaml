@@ -1,0 +1,110 @@
+# The documented CNPG exception. Seafile is MySQL/MariaDB-only, so this is a
+# plain single-replica Deployment over a node-bound volume — no operator, no
+# failover, no CNPG backup tooling.
+#
+# Durability is UNCHANGED from compose: same tank/seafile-db dataset, same
+# snapshots. Follow-up (not in this change): a mysqldump CronJob to Garage,
+# which the compose stack never had either.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seafile-db
+  namespace: seafile
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/name: seafile
+    app.kubernetes.io/component: database
+spec:
+  replicas: 1
+  # Recreate, NOT RollingUpdate. A RWO local volume mounts to one pod only, so a
+  # rolling update deadlocks: the new pod sits Pending on the volume the old pod
+  # still holds, indefinitely.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: seafile
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: seafile
+        app.kubernetes.io/component: database
+    spec:
+      automountServiceAccountToken: false
+      # No nodeSelector — the PV's nodeAffinity pins this to nebula and the
+      # scheduler enforces it. A redundant nodeSelector would just be a second
+      # place for the truth to drift.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: mariadb
+          image: mariadb:10.11
+          imagePullPolicy: IfNotPresent
+          env:
+            # Ignored while the datadir exists (the entrypoint skips init), but
+            # carried across so a DR re-init doesn't produce a different root
+            # password than the one Seafile's conf expects.
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: seafile
+                  key: mysql-root-password
+            - name: MYSQL_LOG_CONSOLE
+              value: "true"
+            - name: MARIADB_AUTO_UPGRADE
+              value: "1"
+          ports:
+            - name: mysql
+              containerPort: 3306
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+          # Same healthcheck the compose stack used, translated to probes.
+          startupProbe:
+            exec:
+              command:
+                - /usr/local/bin/healthcheck.sh
+                - --connect
+                - --mariadbupgrade
+                - --innodb_initialized
+            periodSeconds: 10
+            failureThreshold: 30      # 5 min — InnoDB recovery after an unclean
+                                      # compose shutdown can take a while
+          livenessProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh", "--connect"]
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["/usr/local/bin/healthcheck.sh", "--connect", "--innodb_initialized"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: seafile-mysql
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seafile-db
+  namespace: seafile
+spec:
+  selector:
+    app.kubernetes.io/name: seafile
+    app.kubernetes.io/component: database
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql

@@ -1,0 +1,55 @@
+# Mirrors /opt/seafile/.env + the non-secret defaults baked into
+# seafile-server.yml. Seafile 13 CE.
+#
+# Deliberate deviations from the compose .env, each with a reason:
+#   SEAFILE_SERVER_HOSTNAME  cloud -> cloud.lab  (moving to the tailnet plane)
+#   ENABLE_SEADOC            true -> false       (sdoc-server was never deployed)
+#   SEAFILE_LOG_TO_STDOUT    false -> true       (kubectl logs, not a log file
+#                                                 inside a volume you have to exec into)
+# Everything else is carried across verbatim.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seafile-env
+  namespace: seafile
+data:
+  # --- database ---------------------------------------------------------
+  SEAFILE_MYSQL_DB_HOST: "seafile-db"     # K8s Service; replaces compose's `db`
+  SEAFILE_MYSQL_DB_PORT: "3306"
+  SEAFILE_MYSQL_DB_USER: "seafile"
+  SEAFILE_MYSQL_DB_CCNET_DB_NAME: "ccnet_db"
+  SEAFILE_MYSQL_DB_SEAFILE_DB_NAME: "seafile_db"
+  SEAFILE_MYSQL_DB_SEAHUB_DB_NAME: "seahub_db"
+
+  # --- cache (Seafile 13 defaults to redis; memcached is gone) -----------
+  CACHE_PROVIDER: "redis"
+  REDIS_HOST: "seafile-redis"
+  REDIS_PORT: "6379"
+
+  # --- server identity --------------------------------------------------
+  # Tailnet plane. Cloudflare's 100MB request-body cap is a property of the
+  # edge, not of where Seafile runs, so the public tunnel can never serve
+  # large uploads no matter how the backend is deployed.
+  SEAFILE_SERVER_HOSTNAME: "cloud.lab.packetcraft.dev"
+  SEAFILE_SERVER_PROTOCOL: "https"        # Traefik terminates TLS; links must be https
+  SITE_ROOT: "/"
+  TIME_ZONE: "Asia/Singapore"
+  NON_ROOT: "false"
+  SEAFILE_LOG_TO_STDOUT: "true"
+
+  # --- feature flags ----------------------------------------------------
+  ENABLE_GO_FILESERVER: "true"
+  # ENABLE_SEADOC was true in compose but seadoc.yml was never in COMPOSE_FILE,
+  # so sdoc-server has never existed and /opt/seadoc-data was never created.
+  # Seahub has been advertising an editor backend that isn't there. Setting it
+  # false makes config match reality; add sdoc-server as a sibling Deployment
+  # later if you want .sdoc editing.
+  ENABLE_SEADOC: "false"
+  ENABLE_NOTIFICATION_SERVER: "false"
+  ENABLE_SEAFILE_AI: "false"
+  ENABLE_FACE_RECOGNITION: "false"
+  MD_FILE_COUNT_LIMIT: "100000"
+
+  # INIT_SEAFILE_ADMIN_EMAIL / INIT_SEAFILE_ADMIN_PASSWORD are deliberately
+  # absent: first-run-only, the account already exists in seahub_db, and
+  # shipping them would put a live credential in git for no benefit.

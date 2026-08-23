@@ -1,0 +1,26 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seafile-data
+  namespace: seafile
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: nebula-local
+  volumeName: seafile-data
+  resources:
+    requests:
+      storage: 1000Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seafile-mysql
+  namespace: seafile
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: nebula-local
+  volumeName: seafile-mysql
+  resources:
+    requests:
+      storage: 25Gi

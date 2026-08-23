@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: seafile
+  namespace: seafile
+spec:
+  selector:
+    app.kubernetes.io/name: seafile
+    app.kubernetes.io/component: server
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

@@ -1,0 +1,28 @@
+# Tailnet plane — websecure + the cert-manager wildcard from the default
+# TLSStore, same shape as grafana-ingress-tail.yaml.
+#
+# This replaces BOTH caddy and the per-stack cloudflared container. Neither ever
+# actually ran (both sat in `Created`), so nothing is being taken away: Traefik
+# becomes the first working ingress this install has had.
+#
+# Do not move this to the public tunnel. Cloudflare's 100MB request-body cap
+# breaks large uploads and no backend placement changes that.
+#
+# No buffering middleware: Traefik streams request bodies by default and imposes
+# no body-size limit of its own. Adding `buffering` would materialise whole
+# uploads in memory on deus — don't.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: seafile
+  namespace: seafile
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`cloud.lab.packetcraft.dev`)
+      kind: Rule
+      services:
+        - name: seafile
+          port: 80
+  tls: {}

@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: seafile
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
+    targetRevision: main
+    path: apps/seafile
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: seafile
+  syncPolicy:
+    automated:
+      # prune: false, deliberately, and this is the one Application in the repo
+      # where that matters. With Retain on the PVs a prune cannot destroy data,
+      # but it CAN release the PV and unbind the claim, which turns a stray git
+      # revert into a manual rebind under time pressure. The blast radius on a
+      # 500GB adopted volume isn't worth the tidiness.
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

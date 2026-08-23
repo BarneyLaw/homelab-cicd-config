@@ -1,0 +1,21 @@
+# Cluster-scoped, deliberately generic — this is the "data already lives on a
+# specific node's filesystem, bind to it" class. Reusable for any future
+# ZFS-backed workload (Jellyfin media, Garage, etc).
+#
+# WHY NOT local-path: local-path *provisions* a new empty directory under
+#   /var/lib/rancher/k3s/storage/. We are adopting an EXISTING directory tree
+#   that already contains live data. That requires a statically-provisioned PV.
+#
+# WHY NOT longhorn: Longhorn replicates and owns the block device. The whole
+#   point here is that the bytes stay in the ZFS dataset, under ZFS snapshots.
+#
+# volumeBindingMode: WaitForFirstConsumer is required — without it the PVC
+# binds before the scheduler has considered the PV's nodeAffinity, and the pod
+# can land on a node the volume can't follow.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nebula-local
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
