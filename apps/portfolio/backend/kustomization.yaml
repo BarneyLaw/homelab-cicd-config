@@ -13,6 +13,3 @@ images:
 - name: ghcr.io/home-compute-cluster/portfolio-backend
   newName: ghcr.io/home-compute-cluster/portfolio-backend
   newTag: 9363f3e
-- name: ghcr.io/home-compute-cluster/portfolio-backend-dev
-  newName: ghcr.io/home-compute-cluster/portfolio-backend-dev
-  newTag: 9363f3e

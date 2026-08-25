@@ -1,6 +1,10 @@
 # Dev twin of apps/portfolio/backend/ingressroute.yaml.
-# Served on the internal *.lab.packetcraft.dev wildcard, NOT the public
-# packetcraft.dev tunnel, so dev never competes with prod for a hostname.
+#
+# NOTE the entrypoint differs from prod. Prod uses `web` because its traffic
+# arrives through the cloudflared tunnel on localhost:80. This host is reached
+# directly over TLS on the LAN, so it belongs on `websecure` — same as every
+# other *.lab.packetcraft.dev route (argocd, headlamp, grafana, seafile).
+# TLS is served from the default TLSStore's *.lab.packetcraft.dev wildcard.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -8,7 +12,7 @@ metadata:
   namespace: portfolio-dev
 spec:
   entryPoints:
-    - web
+    - websecure
   routes:
     - kind: Rule
       match: Host(`site-dev.lab.packetcraft.dev`) && PathPrefix(`/api`)
@@ -16,6 +20,7 @@ spec:
       services:
         - name: portfolio-backend-dev
           port: http
+  tls: {}
 
 ---
 # NOTE: prod's admin route sits behind Cloudflare Access on the public tunnel.
@@ -30,7 +35,7 @@ metadata:
   namespace: portfolio-dev
 spec:
   entryPoints:
-    - web
+    - websecure
   routes:
     - kind: Rule
       match: Host(`site-dev.lab.packetcraft.dev`) && PathPrefix(`/api/admin`)
@@ -38,3 +43,4 @@ spec:
       services:
         - name: portfolio-backend-dev
           port: http
+  tls: {}
