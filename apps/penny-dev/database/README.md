@@ -35,6 +35,22 @@ kubectl get secret -n penny-dev penny-dev-db-ca \
 
 It is a CA public certificate — safe to pass around, no secret in it.
 
+**This file expires and has to be re-fetched.** CNPG issues its CA with a
+90-day lifetime and rotates it automatically shortly before expiry; the current
+one is good until 2026-11-05. When it rotates, everyone holding an old copy
+starts getting certificate-verify failures until they run the command again.
+Check the expiry of your copy with:
+
+```bash
+openssl x509 -in penny-dev-ca.crt -noout -subject -dates
+```
+
+If that quarterly chore is not worth it, the alternative is to issue the server
+certificate from the existing `letsencrypt-cloudflare` ClusterIssuer instead and
+point `spec.certificates.serverTLSSecret` at it — then `sslmode=verify-full`
+works off system trust with no CA file anywhere, at the cost of a cert-manager
+dependency on the database's TLS.
+
 If you would rather not carry the file, `sslmode=require` still encrypts the
 connection and needs nothing extra; it just does not verify who you are talking
 to. `sslmode=disable` is refused by the server outright.
