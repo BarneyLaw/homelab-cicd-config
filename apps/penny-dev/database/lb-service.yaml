@@ -8,19 +8,29 @@
 #
 # The selector tracks instanceRole=primary, so on a failover the LB follows the
 # new primary without any change here.
+#
+# This listens on 5432 on ALL five node IPs, not just the one the DNS record
+# points at. That is K3s ServiceLB's default and it is deliberately left alone.
+# The obvious-looking fix -- an `svccontroller.k3s.cattle.io/lbpool` annotation,
+# which this file used to carry with the value `penny-dev-db` -- does nothing at
+# all, for two reasons (see pkg/cloudprovider/servicelb.go in k3s):
+#
+#   1. lbpool is read from the Service's LABELS, not its annotations.
+#   2. ServiceLB only applies a node selector if at least one node carries
+#      `svccontroller.k3s.cattle.io/enablelb=true`. No node here does. Adding it
+#      to deus would not scope this Service alone -- the gate is cluster-wide,
+#      so every ServiceLB including Traefik's would immediately restrict to
+#      labelled nodes, pulling ingress for every *.lab host off the other four.
+#
+# Narrowing the listener is therefore a cluster-wide node-labelling exercise,
+# not a change to this file. It is also low value here: all five addresses are
+# private and reachable only over the LAN or the tailnet, and pg_hba requires
+# TLS plus SCRAM on every one of them.
 apiVersion: v1
 kind: Service
 metadata:
   name: penny-dev-db-lb
   namespace: penny-dev
-  annotations:
-    # Must match the svccontroller.k3s.cattle.io/lbpool LABEL on a node, not the
-    # service name. This previously read `penny-dev-db`, which matches no node,
-    # and K3s ServiceLB silently falls back to scheduling its DaemonSet on EVERY
-    # node -- so 5432 was listening on all five node IPs. `deus` is the only
-    # labelled node and is the IP penny-dev.lab.packetcraft.dev resolves to, so
-    # pinning here collapses the exposed surface to the one address in use.
-    svccontroller.k3s.cattle.io/lbpool: deus
 spec:
   type: LoadBalancer
   selector:

@@ -106,6 +106,7 @@ Not managed by this repo. In Cloudflare, zone `packetcraft.dev`:
 Proxying must stay off: Cloudflare's proxy does not carry raw TCP on 5432, and
 the target is a private address reachable only over the tailnet.
 
-`192.168.1.250` is `deus`, the only node labelled
-`svccontroller.k3s.cattle.io/lbpool=deus`, which is what `lb-service.yaml` pins
-the listener to. If that record is ever repointed, move the label with it.
+`192.168.1.250` is `deus`. Note that the LoadBalancer actually listens on 5432
+on all five node IPs, so any of them works if deus is down -- the DNS record
+just picks one. `lb-service.yaml` explains why narrowing that is a cluster-wide
+node-labelling change rather than something this Service can express.
