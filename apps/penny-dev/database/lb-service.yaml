@@ -1,10 +1,26 @@
+# apps/penny-dev/database/lb-service.yaml
+#
+# Publishes the CNPG primary on port 5432 outside the cluster so developers can
+# reach it at penny-dev.lab.packetcraft.dev over Tailscale. Postgres speaks its
+# own wire protocol and negotiates TLS with an in-band SSLRequest rather than a
+# TLS ClientHello, so Traefik cannot route it by SNI the way the *.lab HTTP
+# hosts are routed -- this needs a real L4 LoadBalancer, not an IngressRoute.
+#
+# The selector tracks instanceRole=primary, so on a failover the LB follows the
+# new primary without any change here.
 apiVersion: v1
 kind: Service
 metadata:
   name: penny-dev-db-lb
   namespace: penny-dev
   annotations:
-    svccontroller.k3s.cattle.io/lbpool: penny-dev-db
+    # Must match the svccontroller.k3s.cattle.io/lbpool LABEL on a node, not the
+    # service name. This previously read `penny-dev-db`, which matches no node,
+    # and K3s ServiceLB silently falls back to scheduling its DaemonSet on EVERY
+    # node -- so 5432 was listening on all five node IPs. `deus` is the only
+    # labelled node and is the IP penny-dev.lab.packetcraft.dev resolves to, so
+    # pinning here collapses the exposed surface to the one address in use.
+    svccontroller.k3s.cattle.io/lbpool: deus
 spec:
   type: LoadBalancer
   selector:

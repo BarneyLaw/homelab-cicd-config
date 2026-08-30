@@ -37,6 +37,12 @@ spec:
                 secretKeyRef:
                   name: penny-dev-db-app
                   key: password
+            # pg_hba rejects hostnossl outright (see database/cluster.yaml).
+            # libpq's default sslmode=prefer would negotiate TLS anyway, but
+            # `require` makes the dependency explicit and fails loudly rather
+            # than silently if TLS ever stops being offered.
+            - name: PGSSLMODE
+              value: require
             - name: APP_ENV
               value: development
           readinessProbe:
