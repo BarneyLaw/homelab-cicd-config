@@ -2,7 +2,7 @@
   "schema_version": 1,
   "mode": "full",
   "source": "portfolio-site",
-  "revision": "cd3ced05993678583d21e00a357d131293e01db7",
+  "revision": "eb520247e9c34dff841b3f3326e8227ed9c10376",
   "items": [
     {
       "slug": "building-a-homelab",
@@ -11,7 +11,61 @@
       "comments_enabled": true
     },
     {
+      "slug": "calcconnect",
+      "kind": "project",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "cs1101s",
+      "kind": "review",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "cs1231s",
+      "kind": "review",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "cs2030s",
+      "kind": "review",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "cs2040s",
+      "kind": "review",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "cs2100",
+      "kind": "review",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "cs2103t",
+      "kind": "review",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
       "slug": "cs2105",
+      "kind": "review",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "cs2106",
+      "kind": "review",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "cs2109s",
       "kind": "review",
       "status": "published",
       "comments_enabled": true
@@ -35,8 +89,14 @@
       "comments_enabled": true
     },
     {
-      "slug": "lan-drop",
-      "kind": "project",
+      "slug": "ma1521",
+      "kind": "review",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "ma1522",
+      "kind": "review",
       "status": "published",
       "comments_enabled": true
     },
@@ -53,8 +113,26 @@
       "comments_enabled": true
     },
     {
+      "slug": "phs-screening",
+      "kind": "project",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
       "slug": "relic-overlay",
       "kind": "project",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "renowapp",
+      "kind": "project",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "st2334",
+      "kind": "review",
       "status": "published",
       "comments_enabled": true
     },
