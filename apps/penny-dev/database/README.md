@@ -96,20 +96,32 @@ new Pool({
 
 ## Why it is wired this way
 
-**Why a LoadBalancer and not a Traefik route.** Postgres does not open with a
-TLS ClientHello; it sends a plaintext `SSLRequest` first and upgrades in band.
-Traefik has no SNI to match on, and `HostSNI(*)` in a TCP router only applies to
-non-TLS traffic, so hostname-based routing of Postgres through Traefik is not
-possible. The name has to resolve straight to an L4 listener.
+**How it is exposed.** Through Traefik, like every other `*.lab` host, via an
+`IngressRouteTCP` on a dedicated `postgres` entrypoint. It does not have its own
+LoadBalancer.
 
-**Why source-IP rules are absent from pg_hba.** K3s ServiceLB masquerades
-off-cluster connections to the ingress node's flannel address. A connection made
-from a Tailscale peer to `192.168.1.250:5432` reaches Postgres from `10.42.0.0`,
-identical to in-cluster traffic. Rules like `host penny penny 192.168.1.0/24`
-therefore never match and give false assurance; the old config had exactly that
-rule. Network scoping is Tailscale's job. pg_hba's job is
-`hostnossl all all all reject`, which stops a client from handing its password
-over in the clear.
+It has to be a *TCP* route on its own port rather than a Host rule, because
+Postgres does not open with a TLS ClientHello — it sends a plaintext
+`SSLRequest` and upgrades in band. Traefik therefore never sees SNI and the
+route matches `HostSNI(`*`)`. Two consequences worth knowing:
+
+- The hostname is not enforced. Any name resolving to the cluster on 5432
+  reaches this database; `penny-dev.lab.packetcraft.dev` is the name you should
+  use, but it is the *port* that selects the backend.
+- A second database cannot share the entrypoint. It needs its own port and its
+  own entry under `ports:` in `apps/traefik/helmchartconfig.yaml`.
+
+Traefik passes the bytes through untouched — there is no `tls:` block on the
+route — so Postgres terminates TLS itself and `sslmode=verify-full` against the
+CNPG CA works end to end.
+
+**Why source-IP rules are absent from pg_hba.** Connections are masqueraded on
+the way in, so by the time a packet reaches Postgres its source sits inside
+`10.42.0.0/16` — LAN, Tailscale and in-cluster traffic are indistinguishable at
+that layer. Rules like `host penny penny 192.168.1.0/24` never match and give
+false assurance; the old config had exactly that rule. Network scoping is
+Tailscale's job. pg_hba's job is `hostnossl all all all reject`, which stops a
+client from handing its password over in the clear.
 
 ## Required DNS record
 
@@ -122,7 +134,7 @@ Not managed by this repo. In Cloudflare, zone `packetcraft.dev`:
 Proxying must stay off: Cloudflare's proxy does not carry raw TCP on 5432, and
 the target is a private address reachable only over the tailnet.
 
-`192.168.1.250` is `deus`. Note that the LoadBalancer actually listens on 5432
-on all five node IPs, so any of them works if deus is down -- the DNS record
-just picks one. `lb-service.yaml` explains why narrowing that is a cluster-wide
-node-labelling change rather than something this Service can express.
+`192.168.1.250` is `deus`. This is Traefik's own LoadBalancer address, the same
+one every other `*.lab` record points at, so nothing here is specific to the
+database. Traefik answers on 5432 from any of its node IPs, so if deus is down
+you can point a client at another one by hand.

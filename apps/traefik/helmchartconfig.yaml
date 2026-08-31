@@ -26,3 +26,20 @@ spec:
         forwardedHeaders:
           trustedIPs:
             - "10.42.0.0/24"
+      # Raw TCP entrypoint for Postgres, consumed by the IngressRouteTCP in
+      # apps/penny-dev/database. Exists so the dev database is reached through
+      # Traefik like every other *.lab host, instead of owning a LoadBalancer.
+      #
+      # This entrypoint carries exactly one backend and cannot be shared.
+      # Postgres does not open with a TLS ClientHello -- it sends a plaintext
+      # SSLRequest and upgrades in band -- so Traefik has no SNI to route on and
+      # the route has to match HostSNI(`*`). The hostname in the connection
+      # string is therefore never inspected: anything resolving here on 5432
+      # reaches penny-dev-db. A second database needs its own port, not its own
+      # hostname.
+      postgres:
+        port: 5432
+        exposedPort: 5432
+        expose:
+          default: true
+        protocol: TCP
