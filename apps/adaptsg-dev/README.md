@@ -29,4 +29,5 @@ kubectl port-forward -n adaptsg-dev deploy/adaptsg-dev 5678:5678
 
 The PVC is protected from Argo prune/delete, but it is not a backup. The init container refuses
 to overwrite tracked local changes. Commit or copy irreplaceable edits before deleting the
-claim or restarting after an unfinished session.
+claim or restarting after an unfinished session. A short root init step uses only `CHOWN` and
+`DAC_OVERRIDE` to prepare the Longhorn mount for the non-root source and app containers.

@@ -30,6 +30,36 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
+        - name: workspace-permissions
+          image: busybox:1.37.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              mkdir -p /workspace/source
+              chown 1000:1000 /workspace /workspace/source
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - DAC_OVERRIDE
+            runAsNonRoot: false
+            runAsUser: 0
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
         - name: source-checkout
           image: alpine/git:v2.47.2
           imagePullPolicy: IfNotPresent
