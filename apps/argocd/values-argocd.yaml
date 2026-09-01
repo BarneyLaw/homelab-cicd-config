@@ -25,9 +25,22 @@ configs:
 # for everything — same class of bug as the Traefik per-backend `service` label.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Scheduling
+#
+# No component below sets a nodeSelector, deliberately. ArgoCD is the control
+# loop for the whole cluster: pinning all seven components to one node means
+# rebooting that node stops every sync, including the sync that would move
+# them. Nothing here is node-bound -- the controller, repo-server, server, dex,
+# applicationSet and notifications are stateless, and the non-HA chart runs
+# Redis with no persistence, so a rescheduled Redis just rebuilds its cache.
+#
+# Consequence to expect: because ArgoCD manages itself, a sync that moves the
+# application-controller pod will look like it has hung partway through. It
+# resumes once the new pod is up.
+# ---------------------------------------------------------------------------
+
 controller:
-  nodeSelector:
-    kubernetes.io/hostname: deus
   metrics:
     enabled: true
     serviceMonitor:
@@ -46,18 +59,16 @@ controller:
       # longhorn-extras / cnpg-extras / cloudflared.
       enabled: false
 
-redis:
-  nodeSelector:
-    kubernetes.io/hostname: deus
-  # redis.metrics.enabled adds a redis_exporter sidecar. Not enabled: the
-  # signal that actually matters (is Redis serving the controller?) is already
-  # covered by argocd_redis_request_total{failed="true"}, which the controller
-  # and repo-server emit themselves. The exporter would add a container for
-  # keyspace stats we have no use for.
+# redis: no overrides. redis.metrics.enabled would add a redis_exporter
+# sidecar; not enabled, because the signal that actually matters (is Redis
+# serving the controller?) is already covered by
+# argocd_redis_request_total{failed="true"}, which the controller and
+# repo-server emit themselves. The exporter would add a container for keyspace
+# stats we have no use for. Note this must stay commented out rather than
+# written as a bare `redis:` key -- an empty key is null, and a null in a Helm
+# values file deletes the chart's defaults for that component.
 
 repoServer:
-  nodeSelector:
-    kubernetes.io/hostname: deus
   metrics:
     enabled: true
     serviceMonitor:
@@ -67,8 +78,6 @@ repoServer:
         release: kube-prom
 
 server:
-  nodeSelector:
-    kubernetes.io/hostname: deus
   metrics:
     enabled: true
     serviceMonitor:
@@ -77,15 +86,11 @@ server:
       additionalLabels:
         release: kube-prom
 
-dex:
-  nodeSelector:
-    kubernetes.io/hostname: deus
-  # dex.metrics left off — no SSO configured, so dex is an idle pod. Turn on
-  # only if/when an OIDC provider is wired up.
+# dex: no overrides. dex.metrics left off — no SSO configured, so dex is an
+# idle pod. Turn on only if/when an OIDC provider is wired up. Same null
+# caveat as redis above: keep this a comment, not an empty `dex:` key.
 
 applicationSet:
-  nodeSelector:
-    kubernetes.io/hostname: deus
   metrics:
     enabled: true
     serviceMonitor:
@@ -94,15 +99,14 @@ applicationSet:
       additionalLabels:
         release: kube-prom
 
-notifications:
-  nodeSelector:
-    kubernetes.io/hostname: deus
-  # notifications.metrics left off — the controller runs but no triggers or
-  # subscriptions are configured, so argocd_notifications_* would be flat zero.
-  # Enable alongside the first real notification trigger:
-  # metrics:
-  #   enabled: true
-  #   serviceMonitor:
-  #     enabled: true
-  #     additionalLabels:
-  #       release: kube-prom
+# notifications: no overrides (same null caveat as redis and dex above).
+# notifications.metrics left off — the controller runs but no triggers or
+# subscriptions are configured, so argocd_notifications_* would be flat zero.
+# Enable alongside the first real notification trigger:
+# notifications:
+#   metrics:
+#     enabled: true
+#     serviceMonitor:
+#       enabled: true
+#       additionalLabels:
+#         release: kube-prom

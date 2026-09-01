@@ -12,8 +12,9 @@ spec:
       helm:
         releaseName: cnpg      # match existing release → adopt, not duplicate
         values: |
-          nodeSelector:
-            kubernetes.io/hostname: deus
+          # No nodeSelector. The operator is a stateless reconciler; pinning it
+          # meant a deus reboot froze CNPG reconciliation cluster-wide (running
+          # Postgres pods survive, but failover and switchover do not).
           monitoring:
             # Operator's own controller-runtime metrics. The chart exposes
             # podMonitorAdditionalLabels specifically so the generated

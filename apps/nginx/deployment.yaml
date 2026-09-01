@@ -13,8 +13,7 @@ spec:
       labels:
         app: nginx
     spec:
-      nodeSelector:
-        kubernetes.io/hostname: deus
+      # No nodeSelector -- stateless, nothing holds it to a particular node.
       containers:
         - name: nginx
           image: ghcr.io/barneylaw/nginx-app:latest  # tag rewritten by CI

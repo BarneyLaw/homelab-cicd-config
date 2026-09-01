@@ -7,6 +7,41 @@ spec:
   # Merged by K3s helm-controller over the packaged chart's own values.
   # Chart: traefik-39.0.701+up39.0.7 (upstream traefik-helm-chart v39.0.7)
   valuesContent: |-
+    # Two replicas, not the chart default of one. Traefik is the single front
+    # door: every public hostname and every *.lab host resolves through it, so
+    # one pod is one node reboot away from a total outage regardless of where
+    # the backends run. K3s ServiceLB already puts a svclb DaemonSet on every
+    # node so :80/:443 answer everywhere -- but with one Traefik pod there is
+    # exactly one endpoint behind all of them.
+    #
+    # Safe to scale only because TLS comes from cert-manager: the wildcard
+    # lives in the lab-packetcraft-wildcard-tls Secret and is handed to Traefik
+    # by the default TLSStore (apps/cert-manager-issuer/). Traefik's own ACME
+    # resolver is not in use, so there is no acme.json for two replicas to
+    # fight over. Turning on a Traefik-managed certResolver later would make
+    # this unsafe without swapping to Traefik Enterprise or a shared KV store.
+    deployment:
+      replicas: 2
+
+    # Prefer one replica per node. ScheduleAnyway, not DoNotSchedule: on a
+    # single-node cluster -- or while one node is being rebuilt -- the second
+    # replica should still schedule rather than sit Pending, which would put us
+    # back at one endpoint precisely when the spread matters most.
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: traefik
+
+    # Keeps a voluntary disruption (node drain, upgrade) from taking both pods
+    # at once. This does nothing for an ungraceful node loss -- only the second
+    # replica helps there.
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+
     metrics:
       prometheus:
         addEntryPointsLabels: true

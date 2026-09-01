@@ -13,8 +13,9 @@ spec:
       labels:
         app: penny-backend
     spec:
-      nodeSelector:
-        kubernetes.io/hostname: deus
+      # No nodeSelector. The only stateful dependency is Postgres, reached at
+      # penny-dev-db-rw.penny-dev.svc.cluster.local -- a ClusterIP, resolvable
+      # and routable from any node -- so nothing about this pod is node-bound.
       containers:
         - name: backend
           image: ghcr.io/barneylaw/penny-backend:latest
