@@ -133,6 +133,7 @@ spec:
         - name: app
           image: python:3.12-bookworm
           imagePullPolicy: IfNotPresent
+          workingDir: /workspace/source
           command:
             - /bin/sh
             - -ec
@@ -200,6 +201,7 @@ spec:
         - name: diagnostics
           image: nicolaka/netshoot:v0.14
           imagePullPolicy: IfNotPresent
+          workingDir: /workspace/source
           command:
             - /bin/sh
             - -ec
