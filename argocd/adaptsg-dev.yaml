@@ -10,6 +10,9 @@ spec:
   destinations:
     - namespace: adaptsg-dev
       server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
   namespaceResourceWhitelist:
     - group: ""
       kind: PersistentVolumeClaim
