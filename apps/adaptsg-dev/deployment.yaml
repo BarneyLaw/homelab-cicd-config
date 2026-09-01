@@ -133,6 +133,7 @@ spec:
         - name: app
           image: python:3.12-bookworm
           imagePullPolicy: IfNotPresent
+          workingDir: /workspace/source
           command:
             - /bin/sh
             - -ec
@@ -156,12 +157,16 @@ spec:
               value: /workspace/tooling:/workspace/source/.venv/bin:/usr/local/bin:/usr/bin:/bin
             - name: PIP_DISABLE_PIP_VERSION_CHECK
               value: "1"
+            - name: PIP_NO_CACHE_DIR
+              value: "1"
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
             - name: PYTHONUNBUFFERED
               value: "1"
             - name: TZ
               value: Asia/Singapore
+            - name: XDG_CACHE_HOME
+              value: /workspace/.cache
           ports:
             - name: http
               containerPort: 8501
@@ -200,6 +205,7 @@ spec:
         - name: diagnostics
           image: nicolaka/netshoot:v0.14
           imagePullPolicy: IfNotPresent
+          workingDir: /workspace/source
           command:
             - /bin/sh
             - -ec
