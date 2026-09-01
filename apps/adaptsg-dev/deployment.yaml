@@ -1,0 +1,202 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adaptsg-dev
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: adaptsg
+      app.kubernetes.io/instance: adaptsg-dev
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: adaptsg
+        app.kubernetes.io/instance: adaptsg-dev
+        app.kubernetes.io/part-of: adaptsg
+        environment: development
+    spec:
+      automountServiceAccountToken: false
+      shareProcessNamespace: true
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: source-checkout
+          image: alpine/git:v2.47.2
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              if [ ! -d /workspace/source/.git ]; then
+                timeout -s TERM 120 git -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=30 \
+                  clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" /workspace/source
+              else
+                timeout -s TERM 120 git -C /workspace/source \
+                  -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=30 \
+                  fetch --depth 1 origin "${REPO_BRANCH}"
+                if ! git -C /workspace/source diff --quiet || \
+                   ! git -C /workspace/source diff --cached --quiet; then
+                  echo "Workspace has uncommitted changes; refusing to overwrite them." >&2
+                  exit 1
+                fi
+                git -C /workspace/source checkout -B "${REPO_BRANCH}" FETCH_HEAD
+              fi
+          env:
+            - name: REPO_URL
+              value: https://github.com/BarneyLaw/simplify-next.git
+            - name: REPO_BRANCH
+              value: main
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+        - name: node-tooling
+          image: node:22-bookworm-slim
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              cp /usr/local/bin/node /tooling/node
+              chmod 0755 /tooling/node
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tooling
+              mountPath: /tooling
+      containers:
+        - name: app
+          image: python:3.12-bookworm
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              cd /workspace/source
+              python -m venv .venv
+              .venv/bin/python -m pip install --upgrade "pip>=26.2"
+              .venv/bin/python -m pip install -e '.[ui,dev]' 'debugpy>=1.8,<2'
+              exec .venv/bin/python -m debugpy --listen 127.0.0.1:5678 \
+                -m streamlit run streamlit_app.py \
+                --server.address=0.0.0.0 \
+                --server.port=8501 \
+                --server.headless=true \
+                --server.runOnSave=true \
+                --browser.gatherUsageStats=false
+          env:
+            - name: ADAPTSG_MODE
+              value: demo
+            - name: PATH
+              value: /workspace/tooling:/workspace/source/.venv/bin:/usr/local/bin:/usr/bin:/bin
+            - name: PIP_DISABLE_PIP_VERSION_CHECK
+              value: "1"
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: TZ
+              value: Asia/Singapore
+          ports:
+            - name: http
+              containerPort: 8501
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /_stcore/health
+              port: http
+            failureThreshold: 60
+            periodSeconds: 10
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: http
+            failureThreshold: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: tooling
+              mountPath: /workspace/tooling
+        - name: diagnostics
+          image: nicolaka/netshoot:v0.14
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - trap 'exit 0' TERM INT; while true; do sleep 3600; done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_ADMIN
+                - NET_RAW
+                - SYS_PTRACE
+            readOnlyRootFilesystem: true
+            runAsNonRoot: false
+            runAsUser: 0
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: adaptsg-dev-workspace
+        - name: tooling
+          emptyDir: {}
