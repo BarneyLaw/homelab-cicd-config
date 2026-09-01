@@ -1,0 +1,15 @@
+# LAN TLS is served by Traefik's default *.lab.packetcraft.dev certificate.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: adaptsg-dev
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`sim-next.lab.packetcraft.dev`)
+      services:
+        - name: adaptsg-dev
+          port: http
+  tls: {}
