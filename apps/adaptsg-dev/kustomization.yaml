@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: adaptsg-dev
+resources:
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingressroute.yaml
+  - networkpolicy.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: adaptsg
+      app.kubernetes.io/instance: adaptsg-dev
+      app.kubernetes.io/part-of: adaptsg
+      app.kubernetes.io/managed-by: argocd
+      environment: development
