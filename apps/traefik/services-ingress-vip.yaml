@@ -1,0 +1,39 @@
+# Dedicated ingress VIP, separate from the control-plane VIP on .241.
+#
+# The chart's own `traefik` Service is left alone and keeps its ServiceLB
+# node-IP addresses. This Service carries a loadBalancerClass, which makes the
+# upstream cloud-provider service controller (and therefore klipper) ignore it
+# entirely, leaving it to kube-vip. Two LB controllers, partitioned by class,
+# no --disable servicelb needed.
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-ingress-vip
+  namespace: kube-system
+  annotations:
+    kube-vip.io/loadbalancerIPs: "192.168.1.242"
+spec:
+  type: LoadBalancer
+  loadBalancerClass: kube-vip.io/kube-vip-class
+  # Cluster, not Local: with 2 Traefik replicas and the VIP pinned to whichever
+  # of the three CP nodes holds the lease, Local would blackhole the VIP any
+  # time the leader has no Traefik pod. Client IP is already lost at the
+  # cloudflared hop for public traffic and irrelevant for *.lab.
+  externalTrafficPolicy: Cluster
+  # COPY THIS FROM THE LIVE SERVICE, do not trust the values below:
+  #   kubectl -n kube-system get svc traefik -o jsonpath='{.spec.selector}'
+  selector:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/instance: traefik-kube-system
+  ports:
+    - name: web
+      port: 80
+      targetPort: web
+    - name: websecure
+      port: 443
+      targetPort: websecure
+    # The custom entrypoint from helmchartconfig.yaml. The chart names container
+    # ports after entrypoints, so targetPort: postgres resolves.
+    - name: postgres
+      port: 5432
+      targetPort: postgres

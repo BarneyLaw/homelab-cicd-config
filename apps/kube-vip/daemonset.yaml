@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kube-vip-services
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kube-vip-services
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kube-vip-services
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: kube-vip
+      # Control-plane nodes only, for now. deus/opus/sol are the always-on
+      # three and match where the CP VIP already lives, so the ARP failure
+      # domain is one you already understand. Widening to legion/nebula is a
+      # nodeSelector edit, nothing else.
+      # Verify the label value: K3s sets "true", kubeadm sets "".
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      tolerations:
+        - effect: NoSchedule
+          operator: Exists
+      containers:
+        - name: kube-vip
+          # Pin to the SAME tag as the control-plane static pod. Read it with:
+          #   kubectl -n kube-system get pod -l component=kube-vip \
+          #     -o jsonpath='{.items[0].spec.containers[0].image}'
+          # or from the Ansible static-pod template.
+          image: ghcr.io/kube-vip/kube-vip:<match-static-pod>
+          imagePullPolicy: IfNotPresent
+          args: ["manager"]
+          env:
+            # Services only. This instance must never touch the control-plane
+            # VIP: that is the Ansible-owned static pod's job, and the whole
+            # point of a second instance is that an ingress change cannot take
+            # the API server address with it.
+            - name: cp_enable
+              value: "false"
+            - name: svc_enable
+              value: "true"
+            - name: vip_arp
+              value: "true"
+
+            # Only reconcile services carrying our class. Everything without a
+            # class stays with K3s ServiceLB, including the existing traefik
+            # Service.
+            - name: lb_class_only
+              value: "true"
+            - name: lb_class_name
+              value: "kube-vip.io/kube-vip-class"
+
+            # Per-service leader election. With one service this changes little,
+            # but it means the lease is scoped to the service rather than to a
+            # single global services leader, and it is a prerequisite if the
+            # ingress service ever moves to externalTrafficPolicy: Local.
+            - name: svc_election
+              value: "true"
+
+            # Explicit lease name. Defaults already differ from the control-plane
+            # lease, but naming it removes any chance of a future Ansible change
+            # colliding the two elections onto one node.
+            - name: svc_leasename
+              value: "kube-vip-services-lock"
+
+            # The static pod almost certainly binds :2112 on the host. Both are
+            # hostNetwork, so a duplicate port is a CrashLoop. Confirm the
+            # static pod's value before trusting this one.
+            - name: prometheus_server
+              value: ":2113"
+
+            # vip_interface is deliberately ABSENT. The nodes are heterogeneous
+            # (M910q / EliteDesk / laptop / desktop) so a single hard-coded
+            # interface name would be wrong on at least one of them. kube-vip
+            # resolves the default-route interface per node. Confirm in the logs.
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN", "NET_RAW"]
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
