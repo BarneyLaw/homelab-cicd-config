@@ -31,7 +31,7 @@ spec:
           #   kubectl -n kube-system get pod -l component=kube-vip \
           #     -o jsonpath='{.items[0].spec.containers[0].image}'
           # or from the Ansible static-pod template.
-          image: ghcr.io/kube-vip/kube-vip:<match-static-pod>
+          image: ghcr.io/kube-vip/kube-vip:v0.8.9
           imagePullPolicy: IfNotPresent
           args: ["manager"]
           env:
