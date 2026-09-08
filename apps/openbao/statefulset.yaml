@@ -1,0 +1,217 @@
+# A StatefulSet, not a Deployment -- the first one in this repo.
+#
+# Raft identifies a node by an ID that must survive a reschedule, and each node
+# owns its own copy of the data. Both come free from a StatefulSet: the pod name
+# is stable (openbao-0), and volumeClaimTemplates gives each replica its own PVC
+# rather than a single claim they would fight over. A Deployment with one PVC
+# works at one replica and then cannot grow.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: openbao
+  namespace: openbao
+spec:
+  replicas: 1
+  serviceName: openbao-internal
+
+  # OnDelete, not RollingUpdate. Any change to this spec would otherwise restart
+  # the pod, and a restarted OpenBao comes back SEALED: it serves 503 to every
+  # client until a human supplies unseal key shares. Argo self-heal plus
+  # RollingUpdate means an unrelated commit can take the vault down at 3am with
+  # nobody expecting it.
+  #
+  # The cost is that a Synced/Healthy Application does not mean the running pod
+  # matches git. Rolling an image bump is deliberate:
+  #   kubectl delete pod openbao-0 -n openbao    # then unseal
+  updateStrategy:
+    type: OnDelete
+
+  # Parallel so that when there are three replicas they all start and can be
+  # unsealed together. OrderedReady would hold pod N+1 until pod N is Ready, and
+  # readiness here means "reachable", which a sealed pod is.
+  podManagementPolicy: Parallel
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+      app.kubernetes.io/instance: openbao
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: openbao
+        app.kubernetes.io/instance: openbao
+        app.kubernetes.io/part-of: openbao
+    spec:
+      serviceAccountName: openbao
+      # Required, unlike most workloads here: the Kubernetes auth method uses
+      # this pod's own token as the reviewer JWT when calling TokenReview.
+      automountServiceAccountToken: true
+
+      # Raft wants to finish in-flight requests and step down cleanly. 30s is
+      # ample for a single node and matches the rest of the repo.
+      terminationGracePeriodSeconds: 30
+
+      securityContext:
+        runAsNonRoot: true
+        # UID 100 / GID 1000 is what the openbao image creates. It has to be
+        # spelled out numerically: the image declares USER openbao by name, and
+        # kubelet refuses to start a runAsNonRoot container whose user it cannot
+        # prove is non-root.
+        runAsUser: 100
+        runAsGroup: 1000
+        # Makes the Longhorn volume group-owned by 1000 and g+rwX so bao can
+        # write the raft store. OnRootMismatch skips the recursive relabel on
+        # every start once ownership is already correct.
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+
+      containers:
+        - name: openbao
+          image: quay.io/openbao/openbao:2.6.2
+          imagePullPolicy: IfNotPresent
+
+          # Calls the binary directly instead of the image's docker-entrypoint.sh.
+          # That script exists to chown the data dir and setcap IPC_LOCK when it
+          # starts as root; we start as UID 100 with mlock disabled, so it has
+          # nothing to do and only adds a layer that could reinterpret these args.
+          command: ["bao"]
+          args: ["server", "-config=/openbao/config/config.hcl"]
+
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+
+            # Raft node identity. Pinned to the pod name rather than left to
+            # default off the hostname, so it is explicit that this is the value
+            # the StatefulSet keeps stable. A node that returns with a new ID is
+            # a new node, and the old one lingers as an unreachable peer.
+            - name: BAO_RAFT_NODE_ID
+              value: $(POD_NAME)
+
+            # Where this node tells clients (and redirecting peers) to reach it.
+            - name: BAO_API_ADDR
+              value: http://$(POD_IP):8200
+
+            # https:// even though the listener sets tls_disable -- the raft
+            # cluster port always uses TLS with certificates OpenBao generates
+            # for itself. Named through the headless Service so a peer's address
+            # survives the pod getting a new IP.
+            - name: BAO_CLUSTER_ADDR
+              value: https://$(POD_NAME).openbao-internal.openbao.svc.cluster.local:8201
+
+            # Points the in-pod CLI at the local listener, so
+            # `kubectl exec ... -- bao status` works without -address every time.
+            - name: BAO_ADDR
+              value: http://127.0.0.1:8200
+
+            - name: HOME
+              value: /home/openbao
+            - name: BAO_LOG_FORMAT
+              value: json
+            - name: TZ
+              value: Asia/Singapore
+
+          ports:
+            - name: http
+              containerPort: 8200
+              protocol: TCP
+            - name: cluster
+              containerPort: 8201
+              protocol: TCP
+
+          # sealedcode/uninitcode are the load-bearing part of these probes.
+          # /v1/sys/health answers 501 when uninitialised and 503 when sealed;
+          # left at those defaults a fresh pod is never Ready, the Service has no
+          # endpoints, and there is no route through Traefik to the UI you need
+          # in order to initialise and unseal it. Overriding them to 2xx makes
+          # readiness mean "reachable", which is the only thing it can usefully
+          # assert for a vault.
+          startupProbe:
+            httpGet:
+              path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # Sealed and uninitialised are explicitly NOT liveness failures. A
+          # restart cannot unseal anything, so treating them as failures gives a
+          # CrashLoop that destroys the only endpoint you could unseal through.
+          livenessProbe:
+            httpGet:
+              path: /v1/sys/health?standbyok=true&sealedcode=200&uninitcode=200
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+                # No IPC_LOCK -- disable_mlock = true in config.hcl.
+
+          volumeMounts:
+            - name: config
+              mountPath: /openbao/config
+              readOnly: true
+            - name: data
+              mountPath: /openbao/data
+            # readOnlyRootFilesystem blocks both of these paths, and both get
+            # written: $HOME holds the CLI's .bao-token after a `bao login` in an
+            # exec session, and /tmp is where raft snapshot restore and plugin
+            # extraction stage files. Without them those operations fail with a
+            # read-only filesystem error at the worst possible moment.
+            - name: home
+              mountPath: /home/openbao
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: config
+          configMap:
+            name: openbao-config
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+
+  # NOT pruned by Argo: PVCs from a volumeClaimTemplate are created by the
+  # StatefulSet controller, not by the Application, so deleting the StatefulSet
+  # leaves them behind. That is the behaviour we want -- the raft store is the
+  # vault. It is still not a backup; see README.md, "Backups".
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: longhorn
+        resources:
+          requests:
+            storage: 10Gi

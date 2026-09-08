@@ -1,0 +1,24 @@
+# LAN/tailnet TLS from Traefik's default *.lab.packetcraft.dev certificate, the
+# same front door as argocd, grafana and seafile. No LoadBalancer of its own.
+#
+# NOT on the public Cloudflare tunnel, and this one is not a preference. The
+# vault answers to anything that can reach it, so its blast radius is whatever
+# network it is published on. Reaching it should require being on the tailnet.
+#
+# Path is not restricted here: the UI at /ui and the API at /v1 share the port,
+# and the API is the half that clients actually use.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: openbao
+  namespace: openbao
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`bao.lab.packetcraft.dev`)
+      services:
+        - name: openbao
+          port: 8200
+  tls: {}

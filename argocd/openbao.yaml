@@ -1,0 +1,39 @@
+# Remember: the argocd/ directory is not watched by any app-of-apps.
+# This needs a manual `kubectl apply -f argocd/openbao.yaml`.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openbao
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
+    targetRevision: main
+    path: apps/openbao
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openbao
+  syncPolicy:
+    automated:
+      # prune: true is safe here despite this being the most data-sensitive app
+      # in the repo. The raft store lives in a PVC created from the StatefulSet's
+      # volumeClaimTemplate, which Argo does not own and therefore cannot prune;
+      # a bad revert deletes the workload and leaves the data behind for the next
+      # sync to re-attach. That is the opposite of seafile, where the PVs are
+      # adopted and prune: false is what protects them.
+      prune: true
+      # selfHeal reverts hand-edits to the StatefulSet spec. It does NOT restart
+      # the pod to apply them -- updateStrategy is OnDelete, so a drifted spec is
+      # corrected in the API and the running pod keeps serving until someone
+      # deletes it on purpose. See apps/openbao/README.md.
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true

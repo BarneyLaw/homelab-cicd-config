@@ -1,0 +1,93 @@
+# Server config, mounted read-only at /openbao/config/config.hcl.
+#
+# DELIBERATELY a plain ConfigMap, not a configMapGenerator with a hash suffix.
+# A hashed name changes on every edit, which rolls the pod — and rolling this
+# pod seals the vault and needs a human with the unseal keys. Config changes
+# here are applied on purpose:
+#
+#   kubectl rollout restart statefulset/openbao -n openbao   # then unseal
+#
+# See README.md. The same reasoning is why updateStrategy is OnDelete.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-config
+  namespace: openbao
+data:
+  config.hcl: |
+    ui = true
+
+    # Bound on [::] rather than 0.0.0.0 so the listener answers on both stacks;
+    # the NetworkPolicy, not the bind address, is what scopes who may connect.
+    listener "tcp" {
+      address         = "[::]:8200"
+      cluster_address = "[::]:8201"
+
+      # TLS terminates at Traefik, like every other *.lab host in this repo.
+      #
+      # BE HONEST ABOUT WHAT THIS COSTS: traffic between Traefik and this pod
+      # crosses the cluster network in cleartext, and for a secrets manager that
+      # traffic contains unseal key shares, root tokens and every secret read.
+      # An attacker who can sniff the CNI bridge or run a pod with CAP_NET_RAW
+      # on the same node sees them. That is a materially higher price than it is
+      # for Grafana or Seafile.
+      #
+      # It is accepted here because the alternative — issuing a cert-manager
+      # cert for openbao.openbao.svc, mounting it, and giving the IngressRoute a
+      # ServersTransport that trusts the cluster CA — has to be got exactly right
+      # or you end up locked out of your own vault. Do that as a follow-up, not
+      # as part of the initial bring-up. README.md §"Upgrading to in-cluster TLS"
+      # has the steps.
+      #
+      # The cluster port (8201) is unaffected: OpenBao always speaks TLS between
+      # raft peers using certificates it generates itself, regardless of this.
+      tls_disable = 1
+
+      # Lets Prometheus scrape /v1/sys/metrics without a token. Exposes operational
+      # telemetry (request rates, seal status, lease counts) — not secret material.
+      # Reaching this port at all still requires being inside the cluster.
+      telemetry {
+        unauthenticated_metrics_access = "true"
+      }
+    }
+
+    storage "raft" {
+      path = "/openbao/data"
+
+      # node_id is not set here: BAO_RAFT_NODE_ID in the StatefulSet supplies it
+      # from the pod name, which is stable across reschedules precisely because
+      # this is a StatefulSet. A raft node that comes back with a new ID is a new
+      # node, and the old one lingers as an unreachable peer.
+
+      # Scaling to 3: uncomment, and see README.md §"Growing to three nodes".
+      # Joining is not just a replica-count change — new nodes come up
+      # uninitialised and have to be unsealed individually.
+      # retry_join {
+      #   leader_api_addr = "http://openbao-0.openbao-internal.openbao.svc.cluster.local:8200"
+      # }
+      # retry_join {
+      #   leader_api_addr = "http://openbao-1.openbao-internal.openbao.svc.cluster.local:8200"
+      # }
+      # retry_join {
+      #   leader_api_addr = "http://openbao-2.openbao-internal.openbao.svc.cluster.local:8200"
+      # }
+    }
+
+    # Required with raft. Raft's bbolt file is mmap'd, so mlock would try to pin
+    # the entire database into resident memory and fail — or succeed and starve
+    # the node. Because mlock is off, the container drops IPC_LOCK along with
+    # every other capability (see statefulset.yaml).
+    #
+    # The tradeoff mlock exists to prevent is real: decrypted secrets can reach
+    # swap. The mitigation is to run the cluster nodes without swap, which is
+    # what kubelet expects by default anyway.
+    disable_mlock = true
+
+    # api_addr / cluster_addr are intentionally absent: BAO_API_ADDR and
+    # BAO_CLUSTER_ADDR set them per-pod from the pod's own identity. They cannot
+    # be written here because every replica needs a different value.
+
+    # No `service_registration "kubernetes" {}`. It labels the pod vault-sealed /
+    # vault-active so a Service can exclude sealed pods — which at one replica
+    # means a sealed vault has no endpoints and you cannot reach the UI to unseal
+    # it. Add it (plus a Role granting get/patch on pods) when going to three.

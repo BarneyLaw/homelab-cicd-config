@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# NOTE: deliberately NO top-level `namespace:` field, same as apps/cloudflared.
+#
+# Setting `namespace: openbao` would rewrite metadata.namespace on every
+# resource -- including prometheusrule.yaml, which must stay in `monitoring`,
+# and the ClusterRoleBinding, which is cluster-scoped. Each resource carries its
+# own explicit namespace instead.
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - configmap.yaml
+  - statefulset.yaml
+  - service.yaml
+  - ingressroute.yaml
+  - networkpolicy.yaml
+  - servicemonitor.yaml
+  - prometheusrule.yaml
+
+# `pairs` without includeSelectors, so this only touches metadata.labels. That
+# matters more here than elsewhere: a StatefulSet's spec.selector is immutable,
+# and a transformer that rewrote it would make every future sync fail with an
+# error about updating forbidden fields.
+labels:
+  - pairs:
+      app.kubernetes.io/name: openbao
+      app.kubernetes.io/instance: openbao
+      app.kubernetes.io/part-of: openbao
+      app.kubernetes.io/managed-by: argocd

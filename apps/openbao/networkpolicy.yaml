@@ -1,0 +1,95 @@
+# Tighter than the other policies in this repo, in one specific direction.
+#
+# INGRESS is deliberately open on 8200. A secrets manager whose clients cannot
+# reach it is useless, and its clients are "eventually most namespaces" plus
+# Traefik in kube-system. Pinning a from: list here would be security theatre
+# that breaks the next app someone onboards; authorisation is OpenBao's job and
+# it does it properly, per-token, with policies and leases. What is NOT open is
+# 8201: the raft cluster port only ever talks to other OpenBao pods.
+#
+# EGRESS is where the real containment is. Unlike every other app here, OpenBao
+# gets no route to the internet at all. It has no reason to make outbound calls
+# -- and "the secrets manager started talking to a host on the internet" is one
+# of the few signals worth making structurally impossible rather than alertable.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openbao-ingress
+  namespace: openbao
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+      app.kubernetes.io/instance: openbao
+  policyTypes:
+    - Ingress
+  ingress:
+    # API + UI, from Traefik and from in-cluster clients.
+    - ports:
+        - port: 8200
+          protocol: TCP
+    # Raft peer traffic, from OpenBao pods only. Inert at one replica; it is
+    # here so growing to three does not need a policy change at the same time.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: openbao
+              app.kubernetes.io/instance: openbao
+      ports:
+        - port: 8201
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openbao-egress
+  namespace: openbao
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+      app.kubernetes.io/instance: openbao
+  policyTypes:
+    - Egress
+  egress:
+    # DNS.
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Pod CIDR (raft peers) and Service CIDR.
+    - to:
+        - ipBlock:
+            cidr: 10.42.0.0/16
+        - ipBlock:
+            cidr: 10.43.0.0/16
+
+    # The Kubernetes API server, and the reason this rule is separate.
+    #
+    # The rule above allows 10.43.0.0/16, which contains kubernetes.default.svc
+    # at 10.43.0.1 -- and that is NOT enough. kube-proxy DNATs the service IP to
+    # a real node address before the egress policy is evaluated, so what the
+    # policy actually sees is a packet to 192.168.1.x:6443. Allowing only the
+    # service CIDR gives a TokenReview that times out with no obvious cause,
+    # which means every `bao login` against the Kubernetes auth method fails.
+    #
+    # 192.168.1.0/24 is the LAN the cluster nodes sit on -- the same range
+    # code-server's policy blocks. Here it is narrowed to port 6443, so this
+    # opens the API server and nothing else on the LAN.
+    - to:
+        - ipBlock:
+            cidr: 192.168.1.0/24
+      ports:
+        - protocol: TCP
+          port: 6443
+
+    # No internet egress rule. Deliberate -- see the header. Things that would
+    # need one, none of which are in use:
+    #   - cloud KMS auto-unseal (Transit unseal against another bao is in-cluster)
+    #   - the database secrets engine pointed at an external host
+    #   - external plugin downloads, which should be baked into an image anyway
+    # If one becomes necessary, add a rule scoped to that destination and port,
+    # not a blanket 0.0.0.0/0 on 443.

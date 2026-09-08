@@ -1,0 +1,55 @@
+# Two Services, because raft needs something a Deployment never does.
+#
+# openbao          - the front door. Traefik and every in-cluster client uses it.
+# openbao-internal - headless, so each pod gets a stable DNS name for peers.
+apiVersion: v1
+kind: Service
+metadata:
+  name: openbao
+  namespace: openbao
+  labels:
+    # Distinguishes the front door from openbao-internal. Both carry identical
+    # app.kubernetes.io labels from the kustomization, so without this the
+    # ServiceMonitor would select both and scrape every pod twice.
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: openbao
+    app.kubernetes.io/instance: openbao
+  ports:
+    - name: http
+      port: 8200
+      targetPort: http
+      protocol: TCP
+---
+# publishNotReadyAddresses is required, not cosmetic. Raft peers have to resolve
+# each other before any of them is Ready -- and at startup none of them is, since
+# they come up sealed. Without this the DNS names in retry_join do not resolve
+# and a restarted cluster never forms a quorum.
+#
+# clusterIP: None gives openbao-0.openbao-internal.openbao.svc.cluster.local
+# per pod, which is what BAO_CLUSTER_ADDR and retry_join point at.
+apiVersion: v1
+kind: Service
+metadata:
+  name: openbao-internal
+  namespace: openbao
+  labels:
+    app.kubernetes.io/component: cluster
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: openbao
+    app.kubernetes.io/instance: openbao
+  ports:
+    - name: http
+      port: 8200
+      targetPort: http
+      protocol: TCP
+    - name: cluster
+      port: 8201
+      targetPort: cluster
+      protocol: TCP
