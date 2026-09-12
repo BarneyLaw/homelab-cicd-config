@@ -1,0 +1,76 @@
+# apps/monitoring-extras/scrapeconfig-etcd.yaml
+#
+# Scrape target for the embedded etcd in K3s. Without this, every rule in
+# prometheusrule-etcd-alert.yaml evaluates on an empty vector and is silent.
+#
+# WHY A ScrapeConfig AND NOT THE BUILT-IN kubeEtcd JOB
+#   kube-prometheus-stack's kubeEtcd builds a Service selecting pods labeled
+#   `component=etcd` in kube-system. Under K3s, etcd is compiled into the k3s
+#   binary and runs as part of k3s.service, so no such pod exists and the
+#   selector matches nothing. The job is created, reports zero targets, and
+#   every etcd alert silently never fires.
+#
+#   The alternative (a selector-less Service plus a hand-written Endpoints
+#   object plus a ServiceMonitor) also works, but the Endpoints API is
+#   deprecated as of Kubernetes 1.33 and this repo already uses ScrapeConfig
+#   for the nebula GPU exporter. Same pattern, one object instead of three.
+#
+# PREREQUISITE ON EACH SERVER NODE (deus, opus, sol)
+#   /etc/rancher/k3s/config.yaml:
+#     etcd-expose-metrics: true
+#   Default binds metrics to 127.0.0.1:2381 only. Restart k3s ONE NODE AT A
+#   TIME and confirm quorum before moving to the next:
+#     sudo systemctl restart k3s
+#     sudo k3s kubectl get --raw /healthz
+#     sudo k3s etcdctl endpoint health --cluster
+#
+#   If ufw stays enabled, the port needs opening too:
+#     sudo ufw allow from 192.168.1.0/24 to any port 2381 proto tcp
+#
+# SCHEME IS HTTP, NOT HTTPS
+#   K3s serves etcd metrics on 2381 over plain HTTP with no client-cert auth.
+#   Most published etcd ServiceMonitors use scheme: https with the etcd peer
+#   certs, because they target kubeadm clusters that expose metrics on 2379.
+#   Copying one of those here produces a TLS handshake error and no metrics.
+#
+# VERIFY AFTER APPLYING
+#   kubectl -n monitoring get scrapeconfig
+#   # Prometheus UI -> Status -> Targets, look for job="etcd", 3 targets UP
+#   # or: curl -s http://192.168.1.250:2381/metrics | grep etcd_server_has_leader
+
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: etcd
+  namespace: monitoring          # must match Prometheus's namespace
+  labels:
+    release: kube-prom           # must match spec.scrapeConfigSelector
+spec:
+  staticConfigs:
+    - targets:
+        - "192.168.1.250:2381"
+      labels:
+        instance: "deus"         # friendly instance so alerts read as node names
+        node: "deus"
+        job: "etcd"              # the rules in prometheusrule-etcd-alert.yaml
+                                 # select on job="etcd" — keep these in sync
+    - targets:
+        - "192.168.1.252:2381"
+      labels:
+        instance: "opus"
+        node: "opus"
+        job: "etcd"
+    - targets:
+        - "192.168.1.251:2381"
+      labels:
+        instance: "sol"
+        node: "sol"
+        job: "etcd"
+
+  # 15s rather than the 30s used for the GPU exporter. Raft heartbeats are
+  # 500ms and the Sep 8 incident went from healthy to process exit in ten
+  # seconds; a 30s interval can miss the whole event between two samples.
+  scrapeInterval: 15s
+  scrapeTimeout: 10s
+  scheme: HTTP
+  metricsPath: /metrics

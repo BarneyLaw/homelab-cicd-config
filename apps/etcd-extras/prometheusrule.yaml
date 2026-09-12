@@ -1,0 +1,191 @@
+# apps/etcd-extras/prometheusrule-alert.yaml
+#
+# Alerts for the embedded etcd in K3s (etcd 3.6.7, k3s v1.35.x).
+#
+# PREREQUISITE — these rules are silent without a scrape target.
+# kube-prometheus-stack's built-in `kubeEtcd` job builds a Service selecting
+# pods labeled `component=etcd` in kube-system. Under K3s etcd is compiled into
+# the k3s binary and no such pod exists, so the default job selects nothing and
+# every rule below evaluates on an empty vector. Same class of silent failure as
+# the Longhorn `robustness == 3` and Traefik v2-metric alert sets.
+#
+# To make them fire:
+#   1. `etcd-expose-metrics: true` in /etc/rancher/k3s/config.yaml on deus,
+#      opus and sol (default binds metrics to 127.0.0.1:2381 only).
+#      Restart one server at a time, waiting for quorum between each.
+#   2. Open 2381/tcp from 192.168.1.0/24 if ufw stays enabled.
+#   3. Ship an Endpoints + headless Service + ServiceMonitor in this same
+#      directory, with the ServiceMonitor carrying `release: kube-prom` and
+#      relabeling the job to `etcd` so the selectors below match.
+#
+# LABEL NOTES
+#   - `etcd_network_peer_sent_failures_total` carries `To=<hex member id>`,
+#     not a hostname. Map with `sudo k3s etcdctl member list` when triaging.
+#     Known ids from the Sep 8 incident:
+#       e116943b377acaa8 = deus
+#       c2fc7f6c10bbaa8e / 83a77e479730f98f = opus, sol (confirm with etcdctl)
+#   - `instance` is the node IP:2381, so it reads as 192.168.1.250:2381 etc.
+#
+# KURED INTERACTION
+#   Every `for:` below is set longer than a single node's cordon/drain/reboot
+#   cycle so a one-at-a-time kured reboot does not page. If you shorten them,
+#   EtcdMembersDegraded and EtcdPeerUnreachable will fire on every patch window.
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: etcd-alerts
+  namespace: monitoring        # PrometheusRules land here regardless of the
+                               # component's own namespace
+  labels:
+    release: kube-prom         # required for the kube-prom ruleSelector
+spec:
+  groups:
+    - name: etcd.quorum
+      rules:
+        # The single most direct signal for the Sep 8 failure. deus logged
+        # "stepped down to follower since quorum is not active" at 21:47:46.6
+        # and the k3s process exited at 21:47:48.5. A 1m `for` would have paged
+        # roughly a second before the control plane went down.
+        - alert: EtcdNoLeader
+          expr: etcd_server_has_leader == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "etcd member {{ $labels.instance }} sees no leader"
+            description: >-
+              Raft has no leader from this member's view for over a minute.
+              The apiserver cannot serve linearizable reads; kube-controller-manager
+              and kube-scheduler will lose their leases and k3s will exit.
+
+        # 3 members, quorum is 2. One down is survivable and expected during a
+        # kured reboot. Two down is a hard outage.
+        - alert: EtcdMembersDegraded
+          expr: count(up{job="etcd"} == 1) == 2
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "etcd running on 2 of 3 members, no fault tolerance left"
+
+        - alert: EtcdQuorumLost
+          expr: count(up{job="etcd"} == 1) < 2
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "etcd below quorum ({{ $value }} of 3 members reachable)"
+
+        # Flapping leadership usually means marginal peer connectivity or a
+        # disk too slow to keep up with heartbeats, not an outright partition.
+        - alert: EtcdLeaderFlapping
+          expr: increase(etcd_server_leader_changes_seen_total[10m]) > 2
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "etcd leadership changed {{ $value }} times in 10m"
+
+    - name: etcd.peers
+      rules:
+        # THE ONE THAT NAMES THE CAUSE. Fires on the sending side with the
+        # unreachable peer in the `To` label, which distinguishes "this node is
+        # cut off from everything" (all peers failing at once, so look at local
+        # routing or ingress filtering) from "one peer is down".
+        - alert: EtcdPeerUnreachable
+          expr: rate(etcd_network_peer_sent_failures_total{job="etcd"}[5m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "etcd {{ $labels.instance }} failing to reach peer {{ $labels.To }}"
+            description: >-
+              Peer message sends are failing. If every peer of a single member
+              fails simultaneously, suspect local ingress filtering or a routing
+              change on that node rather than the peers themselves.
+
+        # Raft heartbeats default to 500ms on k3s. Sustained RTT above ~150ms on
+        # a gigabit LAN means the path is degraded or traffic is being tunneled
+        # somewhere it should not be.
+        - alert: EtcdHighPeerLatency
+          expr: >-
+            histogram_quantile(0.99,
+              sum by (le, instance, To) (
+                rate(etcd_network_peer_round_trip_time_seconds_bucket{job="etcd"}[5m])
+              )
+            ) > 0.15
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "etcd peer RTT p99 {{ $value | humanizeDuration }} to {{ $labels.To }}"
+
+    - name: etcd.disk
+      rules:
+        # deus is an i7-6700T M910q; opus and sol are similar vintage. WAL fsync
+        # is the usual way old SATA hardware kills an etcd cluster, and it looks
+        # identical to a network partition from the apiserver's side.
+        - alert: EtcdHighFsyncDuration
+          expr: >-
+            histogram_quantile(0.99,
+              sum by (le, instance) (
+                rate(etcd_disk_wal_fsync_duration_seconds_bucket{job="etcd"}[5m])
+              )
+            ) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "etcd WAL fsync p99 {{ $value | humanizeDuration }} on {{ $labels.instance }}"
+            description: >-
+              Raft cannot commit faster than it can fsync. Above ~500ms the
+              member will start missing heartbeats and trigger elections.
+
+        - alert: EtcdHighCommitDuration
+          expr: >-
+            histogram_quantile(0.99,
+              sum by (le, instance) (
+                rate(etcd_disk_backend_commit_duration_seconds_bucket{job="etcd"}[5m])
+              )
+            ) > 0.25
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "etcd backend commit p99 {{ $value | humanizeDuration }} on {{ $labels.instance }}"
+
+        # Default quota is 2GiB. Current db size was ~31MB on Sep 8, so this is
+        # a canary for compaction or defrag having stopped, not a capacity issue.
+        - alert: EtcdDatabaseQuotaApproaching
+          expr: >-
+            (etcd_mvcc_db_total_size_in_bytes{job="etcd"}
+             / etcd_server_quota_backend_bytes{job="etcd"}) > 0.75
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "etcd db at {{ $value | humanizePercentage }} of backend quota"
+
+    - name: etcd.apply
+      rules:
+        - alert: EtcdProposalFailures
+          expr: rate(etcd_server_proposals_failed_total{job="etcd"}[5m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "etcd proposals failing on {{ $labels.instance }}"
+            description: >-
+              Usually a symptom of a leaderless cluster or a failed member,
+              rather than a cause in its own right. Correlate with EtcdNoLeader.
+
+        # The apiserver logged "apply request took too long" at 4.99s repeatedly
+        # before the Sep 8 crash. This is that signal as a metric.
+        - alert: EtcdSlowApplies
+          expr: rate(etcd_server_slow_apply_total{job="etcd"}[5m]) > 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "etcd slow applies on {{ $labels.instance }}"
