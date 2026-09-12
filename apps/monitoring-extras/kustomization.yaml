@@ -6,6 +6,8 @@ resources:
 - grafana-admin-sealedsecret.yaml
 - grafana-ingress-tail.yaml
 - scrapeconfig-nebula-gpu.yaml
+- scrapeconfig-etcd.yaml
+- prometheusrule-etcd-alert.yaml
 
 configMapGenerator:
   - name: grafana-dashboard-homelab-overview
