@@ -4,12 +4,11 @@ metadata:
   name: lag-app
 spec:
   entryPoints:
-    - websecure
+    - web
   routes:
     - kind: Rule
-      match: Host(`german.lab.packetcraft.dev`)
+      match: Host(`german.packetcraft.dev`)
       services:
         - name: lag-app
           port: 80
-  # Traefik serves the cluster's default *.lab.packetcraft.dev certificate.
-  tls: {}
+
