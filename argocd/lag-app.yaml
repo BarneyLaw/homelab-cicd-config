@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: lag-app
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
+    targetRevision: main
+    path: apps/lag-app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: lag-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
