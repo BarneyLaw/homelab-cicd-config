@@ -1,0 +1,146 @@
+# apps/kured/values.yaml
+#
+# Chart: kured 6.1.0 (appVersion 1.23.0), https://kubereboot.github.io/charts
+# Consumed by argocd/kured.yaml as $values/apps/kured/values.yaml
+#
+# WHAT TRIGGERS A REBOOT
+#   kured never reboots on a schedule. The window only says WHEN a reboot may
+#   happen; whether one is needed at all comes from the sentinel check below.
+#   Here that check is /usr/local/sbin/kured-reboot-required (Ansible-managed,
+#   roles/unattended_upgrades), which returns true only when the running kernel
+#   differs from the installed one, or the CPU microcode is obsolete. A week
+#   with no kernel update produces no reboots.
+#
+# WINDOW BUDGET (5 nodes, 02:00-06:00 = 240m)
+#   per node: drain ~2m + reboot ~3m + Ready ~2m + lockReleaseDelay 15m
+#             + up to `period` (10m) waiting for the next lock attempt = ~32m
+#   5 x 32m = ~160m. Fits with ~80m of slack. Do not raise `period` to the 1h
+#   default: at 1h only 3-4 nodes get through a window.
+
+image:
+  repository: ghcr.io/kubereboot/kured
+  # tag left empty -> Chart.appVersion (1.23.0). Pin here if Renovate lands.
+  tag: ""
+
+configuration:
+  # ---- What counts as "reboot required" -----------------------------------
+  # useRebootSentinelHostPath MUST be false or the chart does not render
+  # --reboot-sentinel-command at all and you silently fall back to the file.
+  # kured runs the command as:
+  #   /usr/bin/nsenter -m/proc/1/ns/mnt -- <command>
+  # exit 0 = reboot required, exit 1 = not. hostPID + privileged (both already
+  # set by the chart) are what make the nsenter work.
+  useRebootSentinelHostPath: false
+  rebootSentinelCommand: "/usr/local/sbin/kured-reboot-required"
+  rebootSentinel: ""          # unused; the command takes precedence
+  rebootCommand: "/bin/systemctl reboot"
+
+  # ---- Schedule -----------------------------------------------------------
+  # Times MUST stay quoted. Unquoted 02:00 is parsed by YAML 1.1 as the
+  # sexagesimal integer 120, which kured then fails to parse as a time.
+  # Zero-padded 24h form only ("2:00" is ambiguous against the 12h formats
+  # kured also accepts).
+  timeZone: "Asia/Singapore"
+  rebootDays:
+    - su
+  startTime: "02:00"
+  endTime: "06:00"
+
+  # How often the sentinel command runs, and the granularity at which a node
+  # waiting behind the lock notices it is free. The command skips needrestart's
+  # process scan, so this is cheap. See window budget above.
+  period: "10m"
+
+  # ---- Serialisation ------------------------------------------------------
+  # 3 of 5 nodes are etcd members (deus, opus, sol); quorum is 2, so exactly
+  # one may be down. 1 is the only correct value here, not a tuning knob.
+  concurrency: 1
+
+  # 0 = the lock NEVER expires. This is the "a failed reboot halts everything"
+  # requirement: if a node is drained and never comes back, it keeps the lock
+  # forever and no other node reboots until a human clears the annotation:
+  #   kubectl -n kube-system annotate ds kured weave.works/kured-node-lock-
+  # The cost is that patching stops silently. KuredRebootPendingTooLong and
+  # KuredNodeStuckCordoned in apps/monitoring-extras exist to make it loud.
+  lockTtl: 0
+
+  # Hold the lock this long AFTER the node is back and uncordoned. This is the
+  # requested 15m settle buffer. It is a floor, not the real safety mechanism:
+  # Longhorn replica rebuild is the actual constraint and is enforced by the
+  # Prometheus blocker below.
+  lockReleaseDelay: "15m"
+
+  # ---- Drain ---------------------------------------------------------------
+  # Bounded so a Longhorn PDB that refuses eviction cannot wedge the lock
+  # forever. On timeout with forceReboot=false kured releases the lock,
+  # best-effort uncordons, and retries on the next period tick.
+  drainTimeout: "20m"
+  forceReboot: false
+
+  # Soft taint on nodes that are waiting their turn, so pods evicted from the
+  # node currently rebooting do not land on a node about to reboot next.
+  # PreferNoSchedule, so it can never make a pod unschedulable.
+  preferNoScheduleTaint: "weave.works/kured-node-reboot"
+
+  # weave.works/kured-reboot-in-progress + kured-most-recent-reboot-needed
+  # node annotations. Cheap, and they make `kubectl get node -o yaml` tell you
+  # what happened at 03:00 without reading pod logs.
+  annotateNodes: true
+
+  # ---- Reboot blockers (the real Longhorn/etcd guard) ----------------------
+  # kured queries the ALERTS series and refuses to take the lock while a
+  # matching alert is active.
+  #
+  #   alertFilterMatchOnly: true  -> the regexp is an ALLOW-list of blockers.
+  #                                  With the default (false) the regexp is an
+  #                                  EXCLUDE-list and kube-prometheus-stack's
+  #                                  always-firing Watchdog alert would block
+  #                                  every reboot forever.
+  #   alertFiringOnly: false      -> pending alerts count too. Deliberate:
+  #                                  LonghornVolumeDegraded has `for: 20m`, so
+  #                                  waiting for it to fire would be useless as
+  #                                  a gate. Pending means "degraded right now".
+  #
+  # VERIFY THE SERVICE NAME BEFORE APPLYING:
+  #   kubectl -n monitoring get svc | grep prometheus
+  # If the Prometheus query fails, kured treats that as blocked (fail-safe).
+  prometheusUrl: "http://kube-prom-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090"
+  alertFilterMatchOnly: true
+  alertFiringOnly: false
+  alertFilterRegexp: "^(LonghornVolumeDegraded|LonghornVolumeFaulted|LonghornVolumeReadOnly|LonghornNodeDown|EtcdNoLeader|EtcdMembersDegraded|EtcdQuorumLost|EtcdPeerUnreachable|KubeNodeNotReady|KubeNodeUnreachable)$"
+
+  logFormat: text
+  metricsPort: 8080
+
+# ServiceMonitor + headless Service for kured_reboot_required.
+# `release: kube-prom` is mandatory or kube-prom's serviceMonitorSelector
+# ignores it and every kured alert evaluates on an empty vector.
+metrics:
+  create: true
+  interval: 60s
+  labels:
+    release: kube-prom
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+
+# Required: kured nsenters the host mount namespace, both to run the sentinel
+# command and to run systemctl reboot.
+containerSecurityContext:
+  privileged: true
+  readOnlyRootFilesystem: true
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 64Mi
+
+# Must run everywhere, control-plane included. Chart default tolerations
+# already cover node-role.kubernetes.io/control-plane and .../master.
+nodeSelector:
+  kubernetes.io/os: linux

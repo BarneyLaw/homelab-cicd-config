@@ -1,0 +1,108 @@
+# apps/monitoring-extras/prometheusrule-kured-alert.yaml
+#
+# kured is configured with lockTtl: 0, so a node that is drained and never
+# comes back holds the reboot lock forever and silently stops ALL patching
+# cluster-wide. That is the desired failure mode, but it is only safe if it
+# is loud. These alerts are the "loud" half.
+#
+# kured exports exactly one metric: kured_reboot_required{node=""}. Everything
+# else here comes from kube-state-metrics.
+#
+# NOTE ON `for:` DURATIONS
+#   These are deliberately much longer than the alerts in the other -extras
+#   directories. Those are widened to survive a kured reboot; these are meant
+#   to detect kured itself failing, which is a multi-day condition, not a
+#   multi-minute one.
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kured-alerts
+  namespace: monitoring        # PrometheusRules land here regardless of the
+                               # component's own namespace (kured is kube-system)
+  labels:
+    release: kube-prom         # required for the kube-prom ruleSelector
+spec:
+  groups:
+    - name: kured.patching
+      rules:
+        # The primary "patching has stalled" signal. The window is Sunday
+        # 02:00-06:00, so a node that still wants a reboot 8 days later has
+        # missed a full window. Causes, in rough order of likelihood:
+        #   - the lock is stuck on a node that never came back
+        #   - a blocker alert (Longhorn degraded, etcd) has been active all window
+        #   - the window is too short for 5 nodes (raise endTime or lower period)
+        #
+        # Caveat: `for: 8d` restarts if the kured pod restarts (chart bump,
+        # node reboot of a *different* node does not affect this node's pod).
+        # Worst case that delays detection by another 8 days, which is why
+        # KuredNodeStuckCordoned below is the faster, independent path.
+        - alert: KuredRebootPendingTooLong
+          expr: kured_reboot_required == 1
+          for: 8d
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.node }} has needed a reboot for over a week"
+            description: >-
+              This node has reported a required reboot continuously for more
+              than 8 days, so it missed at least one Sunday window.
+              Check the lock first:
+              `kubectl -n kube-system get ds kured -o jsonpath='{.metadata.annotations.weave\.works/kured-node-lock}'`
+              then kured logs on this node for "Reboot blocked" lines naming an
+              active alert. A node that keeps rebooting into an older kernel
+              also lands here.
+
+        # Independent, faster path to the same failure. kured cordons before it
+        # drains and only uncordons after the node returns, so a node left
+        # unschedulable long after the window closed means the reboot did not
+        # complete. Also catches a manual `kubectl cordon` someone forgot about,
+        # which is a feature, not noise.
+        - alert: KuredNodeStuckCordoned
+          expr: kube_node_spec_unschedulable == 1
+          for: 45m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.node }} has been cordoned for 45m"
+            description: >-
+              Node is unschedulable well beyond a normal cordon/drain/reboot
+              cycle (~7m). If kured drained it and it did not return, kured is
+              still holding the reboot lock and no other node will be patched
+              until this is resolved. Fix the node, confirm it is Ready, then
+              clear the lock if it did not clear itself:
+              `kubectl -n kube-system annotate ds kured weave.works/kured-node-lock-`
+
+        # kured missing entirely: DaemonSet not scheduling, ServiceMonitor label
+        # wrong, or the metrics Service never created. Same silent-failure class
+        # as the Longhorn robustness and Traefik v2 metric alerts.
+        - alert: KuredMetricsMissing
+          expr: absent(kured_reboot_required)
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "No kured metrics are being scraped"
+            description: >-
+              kured_reboot_required is absent. Either the DaemonSet is not
+              running or the ServiceMonitor is not selected. Check
+              `kubectl -n kube-system get ds kured` and confirm the
+              ServiceMonitor carries `release: kube-prom`. Automated patching
+              is unobservable until this clears.
+
+        # A kured pod missing on some node means that node will never be
+        # patched, and will never show up in the alert above either, because
+        # the metric is only exported by the pod on that node.
+        - alert: KuredDaemonSetDegraded
+          expr: |
+            kube_daemonset_status_number_ready{namespace="kube-system", daemonset="kured"}
+              < kube_daemonset_status_desired_number_scheduled{namespace="kube-system", daemonset="kured"}
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "kured is not running on every node"
+            description: >-
+              Desired and ready pod counts have disagreed for an hour, far
+              longer than a single reboot. Nodes without a kured pod are never
+              patched. `kubectl -n kube-system get pods -l app.kubernetes.io/name=kured -o wide`
