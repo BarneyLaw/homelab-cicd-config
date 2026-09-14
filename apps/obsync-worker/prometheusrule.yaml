@@ -1,0 +1,91 @@
+# Lives in the monitoring namespace even though the obsync-worker Application
+# targets `obsync`, same placement as the openbao and cloudflared rules.
+#
+# There is no Pushgateway in this cluster, so the worker exports no metrics of
+# its own: a CronJob's pod exits before Prometheus could scrape it. Everything
+# here comes from kube-state-metrics (v2.18) watching the CronJob, which needs
+# nothing from the worker and survives the pod being gone.
+#
+# METRIC NAMES NOT YET SEEN ON THIS CLUSTER. No CronJob existed when these were
+# written, so kube-state-metrics had no kube_cronjob_* series to show. After the
+# first run, confirm they exist:
+#
+#   kubectl get --raw "/api/v1/namespaces/monitoring/services/kube-prom-kube-prometheus-prometheus:9090/proxy/api/v1/label/__name__/values" \
+#     | tr ',' '\n' | grep kube_cronjob
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: obsync-worker-rules
+  namespace: monitoring
+  labels:
+    release: kube-prom
+spec:
+  groups:
+    - name: obsync-worker.alerts
+      rules:
+        # The alert that matters: the store has not been refreshed from Canvas in
+        # over a day. Daily schedule plus 2h of slack, so a slow run does not
+        # page. Silent until the first success, which is what the next rule is
+        # for.
+        - alert: ObsyncWorkerStale
+          expr: |
+            time() - max(kube_cronjob_status_last_successful_time{namespace="obsync", cronjob="obsync-worker"})
+              > 26 * 3600
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "obsync worker has not completed a successful run in over 26h"
+            description: >-
+              Canvas files are not reaching the store. Find the latest Job with
+              `kubectl -n obsync get jobs --sort-by=.metadata.creationTimestamp`
+              and read its logs. Exit code 4 means Canvas rejected the token
+              (NUS tokens expire): generate a new one and reseal the secret.
+
+        # The latest scheduled run has not succeeded 3h after it was scheduled:
+        # it failed through its retries, or hit activeDeadlineSeconds (2h). Fires
+        # on the first bad run, a day before ObsyncWorkerStale would, and also
+        # covers a first run that never succeeds, when no success time exists.
+        - alert: ObsyncWorkerLastRunFailed
+          expr: |
+            (
+              max(kube_cronjob_status_last_schedule_time{namespace="obsync", cronjob="obsync-worker"})
+                > (max(kube_cronjob_status_last_successful_time{namespace="obsync", cronjob="obsync-worker"}) or vector(0))
+            )
+            and on ()
+            (time() - max(kube_cronjob_status_last_schedule_time{namespace="obsync", cronjob="obsync-worker"}) > 3 * 3600)
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "The latest scheduled obsync worker run did not succeed"
+            description: >-
+              Read the failed Job's logs (JSON, one event per line):
+              `kubectl -n obsync logs job/<name> | grep -E '"level":"(WARN|ERROR)"'`.
+              Exit 3 means another run held the store lease; exit 4 means the
+              Canvas token was rejected. The worker leaves the previous manifest
+              live, so vaults keep their current files meanwhile.
+
+        # Canary. If the CronJob is gone (Application not synced, deleted by
+        # hand) or kube-state-metrics stops reporting it, the two alerts above
+        # go silent instead of firing.
+        - alert: ObsyncWorkerMissing
+          expr: absent(kube_cronjob_info{namespace="obsync", cronjob="obsync-worker"})
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "obsync-worker CronJob absent from kube-state-metrics"
+            description: >-
+              Check that the obsync-worker Application is Synced and that its
+              sealed-secret.yaml exists; kustomize fails, and nothing is
+              applied, until it does.
+
+        # `suspend: true` committed to pause the worker and then forgotten.
+        - alert: ObsyncWorkerSuspended
+          expr: max(kube_cronjob_spec_suspend{namespace="obsync", cronjob="obsync-worker"}) == 1
+          for: 24h
+          labels:
+            severity: info
+          annotations:
+            summary: "obsync-worker CronJob has been suspended for over a day"

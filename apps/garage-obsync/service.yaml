@@ -1,0 +1,48 @@
+# Headless service: gives every pod a stable DNS name
+# (garage-0.garage-rpc.obsync.svc.cluster.local) for the RPC mesh.
+#
+# publishNotReadyAddresses is load-bearing, not tidiness. Readiness is gated on
+# /health, and /health returns 503 until the cluster has quorum — which it
+# cannot reach until the nodes can resolve each other. Without this flag the
+# three pods never appear in DNS, never connect, and never become ready.
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage-rpc
+  namespace: obsync
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: garage
+    app.kubernetes.io/instance: garage-obsync
+  ports:
+    - name: rpc
+      port: 3901
+      targetPort: rpc
+---
+# Client-facing service. Only ready (in-quorum) pods receive traffic, so an
+# S3 request never lands on a node that would fail it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage
+  namespace: obsync
+  labels:
+    # The ServiceMonitor selects on this component label so it does not also
+    # match garage-rpc above.
+    app.kubernetes.io/component: api
+spec:
+  selector:
+    app.kubernetes.io/name: garage
+    app.kubernetes.io/instance: garage-obsync
+  ports:
+    - name: s3
+      port: 3900
+      targetPort: s3
+    - name: web
+      port: 3902
+      targetPort: web
+    - name: admin
+      port: 3903
+      targetPort: admin

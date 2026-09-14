@@ -1,0 +1,138 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: garage
+  namespace: obsync
+spec:
+  replicas: 3
+  serviceName: garage-rpc
+
+  # Parallel, not the OrderedReady default. OrderedReady holds garage-1 until
+  # garage-0 is Ready, and garage-0 is only Ready once the cluster has quorum,
+  # which needs the other two running. OrderedReady deadlocks the bootstrap.
+  podManagementPolicy: Parallel
+
+  # RollingUpdate is safe here (unlike openbao's OnDelete): a restarted Garage
+  # node rejoins on its own, and with replication_factor 3 the remaining two
+  # keep serving. One pod at a time is the default and is what we want.
+  updateStrategy:
+    type: RollingUpdate
+
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: garage
+      app.kubernetes.io/instance: garage-obsync
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: garage
+        app.kubernetes.io/instance: garage-obsync
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      # One Garage pod per node. Co-locating two defeats replication entirely.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: garage
+                  app.kubernetes.io/instance: garage-obsync
+              topologyKey: kubernetes.io/hostname
+
+        # Uncomment to constrain WHICH three nodes. Worth doing once you have
+        # decided where 100Gi of local-path actually fits: legion is the node
+        # you least want holding a replica (it is the transient one), and deus
+        # is the smallest disk. local-path does not enforce the size request —
+        # it is a hostPath directory, so an over-full node fills silently.
+        # nodeAffinity:
+        #   requiredDuringSchedulingIgnoredDuringExecution:
+        #     nodeSelectorTerms:
+        #       - matchExpressions:
+        #           - key: kubernetes.io/hostname
+        #             operator: In
+        #             values: ["nebula", "opus", "sol"]
+
+      containers:
+        - name: garage
+          image: dxflrs/garage:v2.3.0
+          # No GARAGE_RPC_PUBLIC_ADDR. Garage v2.3.0 does not read it: a node
+          # started with only that variable advertises no address at all
+          # (checked against the image locally). It is not needed either. Each
+          # node advertises its current pod IP, and the nodes find each other
+          # through bootstrap_peers in garage.toml, which names them by the
+          # headless Service's stable DNS names. Also checked locally: peers that
+          # come back on new IPs, one at a time or all at once, rejoin unaided.
+          env:
+            - name: GARAGE_RPC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: garage-secrets
+                  key: rpc-secret
+            - name: GARAGE_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: garage-secrets
+                  key: admin-token
+          ports:
+            - { containerPort: 3900, name: s3 }
+            - { containerPort: 3901, name: rpc }
+            - { containerPort: 3902, name: web }
+            - { containerPort: 3903, name: admin }
+
+          # Readiness only, no liveness. /health is a CLUSTER health check:
+          # it returns 503 on a perfectly healthy process whenever quorum is
+          # lost. As a liveness probe that turns one node's outage into a
+          # restart loop on the survivors. As a readiness probe it does the
+          # right thing — pull the pod out of the S3 service until quorum
+          # returns. Expect all three pods to sit NotReady until the layout is
+          # applied (see README step 3); that is the bootstrap, not a fault.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: admin
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              # Memory limit only. A CPU limit here would throttle resync and
+              # scrub work exactly when the cluster is trying to heal.
+              memory: 1Gi
+
+          volumeMounts:
+            - { name: config, mountPath: /etc/garage.toml, subPath: garage.toml }
+            - { name: meta,   mountPath: /var/lib/garage/meta }
+            - { name: data,   mountPath: /var/lib/garage/data }
+
+      volumes:
+        - name: config
+          configMap:
+            # kustomize rewrites this to the hash-suffixed generated name.
+            name: garage-config
+
+  # volumeClaimTemplates are IMMUTABLE after creation. Resizing data later is
+  # `kubectl delete statefulset garage --cascade=orphan`, edit, re-sync — the
+  # PVCs and their contents survive. ArgoCD cannot prune these PVCs (it does
+  # not own them), which is why prune: true is safe on this Application.
+  volumeClaimTemplates:
+    - metadata:
+        name: meta
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 5Gi
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 100Gi

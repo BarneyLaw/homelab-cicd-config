@@ -1,0 +1,37 @@
+# Remember: the argocd/ directory is not watched by any app-of-apps.
+# This needs a manual `kubectl apply -f argocd/obsync-worker.yaml`.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: obsync-worker
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/BarneyLaw/homelab-cicd-config.git
+    targetRevision: main
+    path: apps/obsync-worker
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: obsync
+  syncPolicy:
+    automated:
+      # prune: true is safe: this app holds no data. The store lives in
+      # garage-obsync's PVCs, which this Application does not own.
+      prune: true
+      # selfHeal reverts hand-edits to the CronJob, including `kubectl patch
+      # ... suspend: true`. To pause the worker, commit `suspend: true` to
+      # cronjob.yaml instead. Jobs created by hand are not in git and are left
+      # alone.
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+    syncOptions:
+      # garage-obsync owns the obsync namespace; this only matters if the worker
+      # is ever synced first.
+      - CreateNamespace=true
+      - PruneLast=true

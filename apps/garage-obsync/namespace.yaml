@@ -1,0 +1,10 @@
+# The obsync namespace will eventually hold more than Garage (the obsync
+# backend, its CNPG cluster). Whichever Application creates it, only ONE should
+# declare it: two Applications both shipping this file makes ArgoCD report a
+# shared resource and flip ownership on every sync. Garage lands first, so it
+# owns the namespace here; apps/obsync/ should rely on CreateNamespace=true
+# instead of committing its own copy.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: obsync

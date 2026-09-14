@@ -1,0 +1,125 @@
+# The obsync worker: one pull pass over every active Canvas course into the
+# garage-obsync store, daily at 18:17 Singapore time.
+#
+# To run it now instead of waiting (see README.md for a scoped pull):
+#   kubectl -n obsync create job --from=cronjob/obsync-worker obsync-manual-$(date +%s)
+# or in Argo CD: obsync-worker -> the CronJob -> Create Job.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: obsync-worker
+  namespace: obsync
+spec:
+  # 18:17 every day. Off the hour on purpose: most scheduled work fires on :00.
+  schedule: "17 18 * * *"
+  # Without timeZone a CronJob follows the controller's clock, UTC on k3s, which
+  # would make this 02:17 in Singapore. Same zone as kured and seafile.
+  timeZone: "Asia/Singapore"
+
+  # LOAD BEARING. manifests/<course>/latest is read-modify-write with no
+  # compare-and-swap, and Garage ignores If-None-Match, so the worker's store
+  # lease is only best-effort there. Forbid is the real single-writer guarantee
+  # for scheduled runs. It does NOT cover manual Jobs; those are held off by the
+  # lease and exit 3 if a run is already in progress.
+  concurrencyPolicy: Forbid
+
+  # A run missed while the controller was down still starts if noticed within
+  # 3h; after that, the next run is tomorrow's.
+  startingDeadlineSeconds: 10800
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: obsync-worker
+    spec:
+      # Two retries, then the Job fails and ObsyncWorkerLastRunFailed fires.
+      # Exit codes: 1 failed, 2 config, 3 another run holds the lease, 4 Canvas
+      # rejected the token (a new token is the only fix; retries will not help).
+      backoffLimit: 2
+      # A pass still running after 2h is stuck. This must stay below -lock-ttl
+      # so a killed run's lease expires before tomorrow's run needs it.
+      activeDeadlineSeconds: 7200
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: obsync-worker
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: worker
+              # Kustomize owns the release tag; CI writes the tested commit SHA.
+              image: ghcr.io/barneylaw/obsync-worker:latest
+              imagePullPolicy: IfNotPresent
+              args:
+                - run
+                - -rules=/etc/obsync/rules.json
+                - -tmp-dir=/tmp
+                - -lock-ttl=3h
+              env:
+                - name: CANVAS_BASE_URL
+                  value: "https://canvas.nus.edu.sg"
+                - name: CANVAS_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: obsync-worker
+                      key: canvas-token
+                # Path-style S3 against the in-cluster Garage; the worker needs no
+                # vhost DNS. See apps/garage-obsync/README.md.
+                - name: GARAGE_ENDPOINT
+                  value: "http://garage.obsync.svc.cluster.local:3900"
+                - name: GARAGE_BUCKET
+                  value: "obsync"
+                - name: GARAGE_REGION
+                  value: "garage"
+                - name: GARAGE_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: obsync-worker
+                      key: garage-access-key
+                - name: GARAGE_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: obsync-worker
+                      key: garage-secret-key
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  # Memory limit only. Downloads stream through a temp file, so
+                  # memory stays flat however large a PDF is; no CPU limit so a
+                  # big pass is not throttled for no benefit.
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              volumeMounts:
+                - name: rules
+                  mountPath: /etc/obsync
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: rules
+              configMap:
+                # kustomize rewrites this to the hash-suffixed generated name.
+                name: obsync-worker-rules
+            # In-flight downloads, hashed on disk before upload. Must exceed the
+            # largest file the rules let through: keep-slides exempts PDFs from
+            # the 2 GiB cap.
+            - name: tmp
+              emptyDir:
+                sizeLimit: 5Gi

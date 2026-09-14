@@ -1,0 +1,41 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# NOTE: deliberately NO top-level `namespace:` field, same as apps/openbao and
+# apps/cloudflared. prometheusrule.yaml must stay in `monitoring`; every other
+# resource carries `namespace: obsync` explicitly.
+#
+# No namespace.yaml either: apps/garage-obsync owns the obsync namespace, and
+# two Applications declaring it would flip ownership on every sync. This
+# Application relies on CreateNamespace=true.
+
+                            # file makes kustomize build fail and Argo CD go
+                            # Unknown, which is the intended failure mode: a
+                            # placeholder would sync and then fail every run.
+resources:
+- sealed-secret.yaml
+- cronjob.yaml
+- prometheusrule.yaml
+
+# Worker rules are GitOps: edit rules.json here and commit. A generator rather
+# than a committed ConfigMap, so the name changes with the content and the next
+# Job reads the new rules; a plain ConfigMap edit would also work for a Job, but
+# this way the change shows up in the CronJob's diff in Argo CD.
+configMapGenerator:
+- files:
+  - rules.json
+  name: obsync-worker-rules
+  namespace: obsync
+
+# `pairs` without includeSelectors: metadata.labels only.
+labels:
+- pairs:
+    app.kubernetes.io/instance: obsync-worker
+    app.kubernetes.io/managed-by: argocd
+    app.kubernetes.io/name: obsync-worker
+    app.kubernetes.io/part-of: obsync
+
+images:
+- name: ghcr.io/barneylaw/obsync-worker
+  newName: ghcr.io/barneylaw/obsync-worker
+  newTag: 2e949c1

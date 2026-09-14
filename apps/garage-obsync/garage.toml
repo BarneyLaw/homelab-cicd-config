@@ -1,0 +1,53 @@
+# Garage node configuration for the obsync S3 store.
+#
+# Deliberately a SECOND, independent Garage cluster: the existing one runs as
+# Docker Compose on nebula backing CNPG/etcd backups. Sharing it would couple
+# obsync's availability to the backup store and vice versa.
+#
+# Secrets are NOT in this file. rpc_secret and admin_token come from the
+# garage-secrets Secret via GARAGE_RPC_SECRET / GARAGE_ADMIN_TOKEN. Setting
+# either here as well is a config error, not an override.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir     = "/var/lib/garage/data"
+db_engine    = "lmdb"
+
+# 3 replicas across 3 nodes: every node holds a full copy, quorum is 2.
+# One node can be down (reboot, kured drain) without losing writes.
+replication_factor = 3
+
+rpc_bind_addr = "[::]:3901"
+
+# How the three nodes find each other. Nothing discovers peers in this setup:
+# a fresh node knows only itself, and `garage status` on garage-0 lists one
+# node until the others are connected. Node IDs are generated on first start
+# and kept in the meta volume, so this list is filled in once, after the layout
+# exists (README step 5), and committed. Peers are named by the headless
+# Service's DNS names, resolved again on every start, so a pod that returns on a
+# new IP rejoins with no manual step.
+#
+# bootstrap_peers = [
+#   "<garage-0 node id>@garage-0.garage-rpc.obsync.svc.cluster.local:3901",
+#   "<garage-1 node id>@garage-1.garage-rpc.obsync.svc.cluster.local:3901",
+#   "<garage-2 node id>@garage-2.garage-rpc.obsync.svc.cluster.local:3901",
+# ]
+
+[s3_api]
+s3_region     = "garage"
+api_bind_addr = "[::]:3900"
+# Vhost-style addressing only works if <bucket>.s3.garage.internal resolves.
+# Nothing in-cluster serves that zone, so clients MUST use path-style
+# (aws-sdk-go-v2: o.UsePathStyle = true). root_domain is kept so vhost-style
+# becomes available later without a config change.
+root_domain = ".s3.garage.internal"
+
+[s3_web]
+bind_addr   = "[::]:3902"
+root_domain = ".web.garage.internal"
+index       = "index.html"
+
+[admin]
+api_bind_addr = "[::]:3903"
+# metrics_token deliberately unset: /metrics is then unauthenticated, which is
+# what the ServiceMonitor needs. /health is unauthenticated regardless.
+# The port is cluster-internal only (no IngressRoute), so this is contained.

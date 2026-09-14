@@ -1,0 +1,13 @@
+{
+  "_comment": "WORKER rules. Keep these boring. Anything the worker drops is invisible to every consumer forever, and undoing it costs a full Canvas refetch. Aggressive filtering belongs in the plugin, where reversing it is a checkbox.",
+  "version": 1,
+  "default": "include",
+  "rules": [
+    { "name": "no-video", "priority": 10, "action": "skip",
+      "match": { "ext": ["mp4", "mkv", "mov", "avi", "webm", "m4v", "wmv"] } },
+    { "name": "hard-size-cap", "priority": 10, "action": "skip",
+      "match": { "min_size": 2147483648 } },
+    { "name": "keep-slides-regardless", "priority": 100, "action": "include",
+      "match": { "ext": ["pdf", "pptx", "docx", "md"] } }
+  ]
+}

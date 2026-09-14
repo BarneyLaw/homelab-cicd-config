@@ -1,0 +1,23 @@
+# release: kube-prom is what makes this discoverable by the kube-prometheus-stack
+# install. Without it the ServiceMonitor applies cleanly, ArgoCD reports Healthy,
+# and nothing is ever scraped.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: garage
+  namespace: obsync
+  labels:
+    release: kube-prom
+spec:
+  namespaceSelector:
+    matchNames: [obsync]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: garage
+      app.kubernetes.io/instance: garage-obsync
+      # Excludes the headless garage-rpc service, which has no admin port.
+      app.kubernetes.io/component: api
+  endpoints:
+    - port: admin
+      path: /metrics
+      interval: 30s
