@@ -1,0 +1,33 @@
+# Obsidian's read path to the store. The obsync plugin fetches manifests and
+# blobs from https://obsync.lab.packetcraft.dev over the tailnet (README step 7).
+#
+# Garage's WEB endpoint (3902), not S3 (3900). The plugin holds no credentials
+# and sends plain GETs, which the S3 API rejects unsigned. The web endpoint
+# serves reads only (a PUT gets 400) and answers Range with 206, which the
+# plugin requires for chunked downloads on mobile.
+#
+# Garage picks the bucket from the Host header, and Traefik passes Host through
+# unchanged. The bucket therefore needs website access enabled and a global
+# alias equal to this hostname; without them every request is a 404.
+#
+# Only manifests/ and blobs/ are routed. runs/ (run summaries, with host names
+# and error text) and locks/ stay cluster-internal.
+#
+# No auth, like every other *.lab service: anyone who can reach 192.168.1.242,
+# i.e. the LAN and the tailnet, can read course files. TLS is the default
+# TLSStore's *.lab.packetcraft.dev wildcard.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: garage-obsync-web
+  namespace: obsync
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`obsync.lab.packetcraft.dev`) && (PathPrefix(`/manifests/`) || PathPrefix(`/blobs/`))
+      services:
+        - name: garage
+          port: web
+  tls: {}

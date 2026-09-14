@@ -10,7 +10,9 @@ resources:
                             # mode; a placeholder would sync Healthy and then
                             # CrashLoop on decrypt.
   - statefulset.yaml
+  - storageclass.yaml
   - service.yaml
+  - ingressroute.yaml
   - servicemonitor.yaml
 
 # garage.toml is a generator, not a committed ConfigMap, specifically because

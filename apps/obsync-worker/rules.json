@@ -6,7 +6,7 @@
     { "name": "no-video", "priority": 10, "action": "skip",
       "match": { "ext": ["mp4", "mkv", "mov", "avi", "webm", "m4v", "wmv"] } },
     { "name": "hard-size-cap", "priority": 10, "action": "skip",
-      "match": { "min_size": 2147483648 } },
+      "match": { "min_size": 104857600 } },
     { "name": "keep-slides-regardless", "priority": 100, "action": "include",
       "match": { "ext": ["pdf", "pptx", "docx", "md"] } }
   ]

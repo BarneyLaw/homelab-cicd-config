@@ -62,6 +62,7 @@ spec:
               imagePullPolicy: IfNotPresent
               args:
                 - run
+                - -course=93794,94846,93610
                 - -rules=/etc/obsync/rules.json
                 - -tmp-dir=/tmp
                 - -lock-ttl=3h
