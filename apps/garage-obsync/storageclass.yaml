@@ -1,0 +1,38 @@
+# Longhorn with ONE replica, kept on the pod's own node. For Garage only.
+#
+# Not the `longhorn` class: that keeps 3 replicas, and Garage already keeps 3
+# copies itself (replication_factor = 3). Stacking the two stores every object 9
+# times and turns each kured reboot into two rebuilds, Longhorn's and Garage's.
+#
+# Not local-path: it cannot enforce the size request (a full volume fills the
+# node's disk silently), and its volumes are invisible to Longhorn's UI, metrics
+# and alerts.
+#
+# strict-local keeps the single replica on the node the volume attaches to, so
+# a Garage pod behaves as it did on local-path: pinned to its node, waiting out
+# a reboot instead of rescheduling elsewhere and pulling 75Gi across the network.
+#
+# REQUIRES Longhorn's node-drain-policy to be allow-if-replica-is-stopped (see
+# README step 0). With the default, block-if-contains-last-replica, every node
+# holding one of these volumes refuses to drain and kured never reboots it.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-garage
+provisioner: driver.longhorn.io
+# Rebuildable data: the store is a cache Canvas can refill, and Garage restores
+# a lost node from the other two. Retain would leave orphaned 75Gi volumes
+# behind every deliberate PVC deletion.
+reclaimPolicy: Delete
+# Longhorn can grow a volume in place: `kubectl patch pvc`, no StatefulSet
+# surgery (README, operational notes).
+allowVolumeExpansion: true
+# Provision only once the scheduler has placed the pod, so the one replica is
+# created on that pod's node. VERIFY on the first deploy (README step 2): each
+# Longhorn volume's node must match its garage-N pod's node.
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  numberOfReplicas: "1"
+  dataLocality: "strict-local"
+  staleReplicaTimeout: "30"
+  fsType: "ext4"
