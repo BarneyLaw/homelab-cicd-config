@@ -26,7 +26,7 @@ spec:
     - websecure
   routes:
     - kind: Rule
-      match: Host(`obsync.lab.packetcraft.dev`) && (PathPrefix(`/manifests/`) || PathPrefix(`/blobs/`))
+      match: Host(`obsync-man.lab.packetcraft.dev`) && (PathPrefix(`/manifests/`) || PathPrefix(`/blobs/`))
       services:
         - name: garage
           port: web
