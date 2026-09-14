@@ -32,7 +32,7 @@ kubectl create secret generic obsync-worker \
   --from-literal=garage-access-key='GK...' \
   --from-literal=garage-secret-key='...' \
   --dry-run=client -o yaml \
-| kubeseal --cert sealed-secrets.pem --format yaml \
+| kubeseal --cert sealed-secrets-pub.pem --format yaml \
   > apps/obsync-worker/sealed-secret.yaml
 
 shred -u canvas-token.txt
