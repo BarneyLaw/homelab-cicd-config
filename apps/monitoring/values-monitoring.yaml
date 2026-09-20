@@ -76,3 +76,41 @@ alertmanager:
     # and confirm a `discord` receiver is present.
     alertmanagerConfiguration:
       name: homelab
+
+# ---- K3s: components that are not separately scrapeable -------------------
+# KubeProxyDown / KubeControllerManagerDown / KubeSchedulerDown were firing
+# permanently and notifying Discord. They are false positives, not failures.
+#
+# The chart assumes kubeadm, where each of these is its own pod, and creates a
+# headless Service selecting component=kube-{proxy,scheduler,controller-manager}
+# in kube-system plus a ServiceMonitor on 10249/10259/10257. Under K3s all three
+# are compiled into the single k3s process, so no such pod exists, the selector
+# matches nothing, the job reports 0 targets, and absent(up{job=...}) is true
+# forever. Verified 2026-09-20: 0 targets each, while job=kubelet had 15 and
+# job=apiserver had 3.
+#
+# Each of these flags gates the Service, the ServiceMonitor AND the alert rule
+# group (the groups are guarded on `.Values.<component>.enabled`), so this one
+# change removes the alerts rather than merely muting them.
+#
+# WHY NOT SCRAPE THEM, THE WAY scrapeconfig-etcd.yaml DOES FOR ETCD
+#   It is possible -- bind-address=0.0.0.0 via kube-controller-manager-arg /
+#   kube-scheduler-arg / kube-proxy-arg in /etc/rancher/k3s/config.yaml, a k3s
+#   restart on each server, a ufw rule, and static-target ScrapeConfigs -- but it
+#   buys very little here. Unlike etcd, these three are not independently
+#   failable on K3s: they live in the same process as the apiserver, so if they
+#   die, k3s is down, which job=apiserver, node Ready and the etcd alerts already
+#   catch. etcd earned its ScrapeConfig because a member CAN lose quorum while
+#   k3s keeps serving; these cannot.
+#
+#   Leaving a permanently-firing critical alert in place is the worse option: it
+#   trains everyone to ignore the channel, which is the failure mode the
+#   Alertmanager work in this same file exists to fix.
+kubeProxy:
+  enabled: false
+
+kubeControllerManager:
+  enabled: false
+
+kubeScheduler:
+  enabled: false
