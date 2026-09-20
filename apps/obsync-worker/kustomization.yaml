@@ -38,4 +38,4 @@ labels:
 images:
 - name: ghcr.io/barneylaw/obsync-worker
   newName: ghcr.io/barneylaw/obsync-worker
-  newTag: 95fbaf1
+  newTag: e1de025
