@@ -9,6 +9,7 @@ resources:
 - scrapeconfig-etcd.yaml
 - prometheusrule-etcd-alert.yaml
 - prometheusrule-kured-alert.yaml
+- prometheusrule-kured-blockers.yaml
 
 configMapGenerator:
   - name: grafana-dashboard-homelab-overview

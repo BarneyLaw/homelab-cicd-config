@@ -33,10 +33,16 @@ spec:
         #   - a blocker alert (Longhorn degraded, etcd) has been active all window
         #   - the window is too short for 5 nodes (raise endTime or lower period)
         #
-        # Caveat: `for: 8d` restarts if the kured pod restarts (chart bump,
-        # node reboot of a *different* node does not affect this node's pod).
-        # Worst case that delays detection by another 8 days, which is why
-        # KuredNodeStuckCordoned below is the faster, independent path.
+        # Caveat: `for: 8d` restarts if the kured pod restarts, AND it restarts
+        # whenever Prometheus restarts, because Prometheus here has no
+        # persistent storage (spec.storage is unset, so the TSDB is an
+        # emptyDir). Measured 2026-09-20: the Prometheus pod was recreated at
+        # 18:00:25Z, the same minute the reboot window opened, because the drain
+        # evicted it -- so in practice this alert is reset by the very event it
+        # is supposed to detect and has never matured. Treat KuredDrainStuck and
+        # KuredNodeStuckCordoned below as the alerts that actually work here,
+        # and give Prometheus a PVC if you want any multi-day `for:` to mean
+        # something.
         - alert: KuredRebootPendingTooLong
           expr: kured_reboot_required == 1
           for: 8d
@@ -106,3 +112,37 @@ spec:
               Desired and ready pod counts have disagreed for an hour, far
               longer than a single reboot. Nodes without a kured pod are never
               patched. `kubectl -n kube-system get pods -l app.kubernetes.io/name=kured -o wide`
+
+        # The alert that would have caught the 2026-09-20 outage in 30 minutes
+        # instead of never. A node kured has cordoned, which STILL needs a
+        # reboot, means the cordon+drain did not achieve anything: either the
+        # drain is blocked (an unevictable pod -- see "WHY DRAINS MUST BE ABLE
+        # TO SUCCEED" in apps/kured/values.yaml) or it keeps timing out and
+        # retrying the same node, holding the lock and starving every other node.
+        #
+        # Why this shape and not a cordon/uncordon counter: kured's retry loop
+        # uncordons and re-cordons within the same second, far inside the 30s
+        # scrape interval, so the gap is never sampled and
+        # changes(kube_node_spec_unschedulable[1h]) stays at 1. Verified against
+        # the real incident: 488 consecutive scrapes saw legion-1 cordoned and
+        # changes() peaked at 1. Do not "improve" this into a churn counter.
+        #
+        # Cannot fire outside a window: nothing else cordons these nodes. A
+        # successful reboot clears kured_reboot_required, so the `and` stops it.
+        - alert: KuredDrainStuck
+          expr: kured_reboot_required == 1 and on (node) kube_node_spec_unschedulable == 1
+          for: 30m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.node }} is cordoned but still needs a reboot"
+            description: >-
+              kured cordoned this node more than 30m ago and it still reports a
+              required reboot, so the drain is not completing. While this lasts
+              the node holds the reboot lock and NO node in the cluster is being
+              patched. Find the pod that will not evict:
+              `kubectl -n kube-system logs -l app.kubernetes.io/name=kured
+              --since=1h | grep -v "checking if reboot is required" | grep -E
+              "Draining|Unable to cordon"` and check for a PodDisruptionBudget
+              with disruptionsAllowed 0:
+              `kubectl get pdb -A -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,ALLOWED:.status.disruptionsAllowed`

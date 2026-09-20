@@ -11,11 +11,47 @@
 #   differs from the installed one, or the CPU microcode is obsolete. A week
 #   with no kernel update produces no reboots.
 #
+# WHY DRAINS MUST BE ABLE TO SUCCEED
+#   Read this before adding any PodDisruptionBudget to this cluster.
+#
+#   kured holds its cluster-wide lock for the whole cordon+drain, and on drain
+#   failure it releases and simply retries the SAME node on the next tick. A pod
+#   that can never be evicted therefore does not degrade one node of patching --
+#   it stops patching for the entire cluster, indefinitely and silently.
+#
+#   That is not hypothetical. Diagnosed 2026-09-20: portfolio-db, portfolio-db-dev
+#   and penny-dev-db were all instances: 1, and CNPG gives every cluster a
+#   primary PDB of minAvailable: 1. Over a single pod that reports
+#   disruptionsAllowed: 0 forever, so no eviction can ever satisfy it. legion-1
+#   hosted two of those databases, won the lock at 02:00 every Sunday, failed the
+#   drain, and re-acquired immediately -- holding the lock ~100% of the window.
+#   sol logged "Lock already held: legion-1" at every tick for four hours and
+#   never got a turn. Neither node had rebooted in three weeks. The fix was
+#   enablePDB: false on all three clusters.
+#
+#   Longhorn instance-manager PDBs also report disruptionsAllowed: 0 at rest,
+#   but that is fine: node-drain-policy is allow-if-replica-is-stopped, so
+#   Longhorn drops the PDB once the volume detaches. It only stays stuck when a
+#   workload pod that cannot be evicted is keeping the volume attached -- it is a
+#   symptom of the above, not an independent cause.
+#
+#   To check the invariant at any time -- any row with ALLOWED 0 that is not a
+#   longhorn-system instance-manager will wedge patching:
+#     kubectl get pdb -A -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,ALLOWED:.status.disruptionsAllowed
+#
 # WINDOW BUDGET (5 nodes, 02:00-06:00 = 240m)
-#   per node: drain ~2m + reboot ~3m + Ready ~2m + lockReleaseDelay 15m
-#             + up to `period` (10m) waiting for the next lock attempt = ~32m
-#   5 x 32m = ~160m. Fits with ~80m of slack. Do not raise `period` to the 1h
-#   default: at 1h only 3-4 nodes get through a window.
+#   Measured against the 1.23.0 source, not estimated:
+#     drain ~2m + reboot ~3m + Ready ~2m
+#     + 30-90s  the rebooted node fresh pod runs delaytick.New(.., 1m) before
+#               it checks the lock it is still holding
+#     + lockReleaseDelay  Release() is a synchronous time.Sleep, not a deadline
+#     + up to period      the next node only notices the free lock on its tick
+#     + period per blocked tick, and there is usually at least one
+#   = ~23m per node at the settings below, so ~115m for 5 nodes.
+#
+#   The old 15m/10m settings made this ~45-60m per node, i.e. 225-300m against a
+#   240m window: the last one or two nodes were silently abandoned every week,
+#   because a closed window just continues with no log line.
 
 image:
   repository: ghcr.io/kubereboot/kured
@@ -46,10 +82,15 @@ configuration:
   startTime: "02:00"
   endTime: "06:00"
 
-  # How often the sentinel command runs, and the granularity at which a node
-  # waiting behind the lock notices it is free. The command skips needrestart's
-  # process scan, so this is cheap. See window budget above.
-  period: "10m"
+  # Granularity of the reboot-decision loop: how long a node waits before it
+  # re-checks the window, the sentinel, the blockers and the lock. Every failed
+  # or blocked attempt costs one full period, so this is the dominant term in
+  # the window budget above.
+  #
+  # NOT how often the sentinel runs. maintainRebootRequiredMetric is its own
+  # goroutine calling the sentinel every 60s regardless of this value, so
+  # lowering it costs nothing in sentinel invocations.
+  period: "5m"
 
   # ---- Serialisation ------------------------------------------------------
   # 3 of 5 nodes are etcd members (deus, opus, sol); quorum is 2, so exactly
@@ -60,31 +101,50 @@ configuration:
   # requirement: if a node is drained and never comes back, it keeps the lock
   # forever and no other node reboots until a human clears the annotation:
   #   kubectl -n kube-system annotate ds kured weave.works/kured-node-lock-
-  # The cost is that patching stops silently. KuredRebootPendingTooLong and
-  # KuredNodeStuckCordoned in apps/monitoring-extras exist to make it loud.
+  #
+  # Note the chart drops this flag entirely: the guard is falsy for 0, so
+  # --lock-ttl is never rendered. It works only because the kured default is
+  # also 0. A non-zero value here WOULD be passed through.
+  #
+  # The only thing that bounds a wedged lock today is drainTimeout below. If a
+  # drain ever hangs without timing out, nothing expires the lock, which is why
+  # the alerts in apps/monitoring-extras exist to make it loud.
   lockTtl: 0
 
-  # Hold the lock this long AFTER the node is back and uncordoned. This is the
-  # requested 15m settle buffer. It is a floor, not the real safety mechanism:
-  # Longhorn replica rebuild is the actual constraint and is enforced by the
-  # Prometheus blocker below.
-  lockReleaseDelay: "15m"
+  # Hold the lock this long AFTER the node is back and uncordoned, as a settle
+  # buffer. Deliberately short: the Prometheus blocker below is the real
+  # Longhorn guard, and this delay is ALSO applied on the drain-FAILURE path
+  # (Release sleeps before releasing, whatever the reason), where it is pure
+  # dead time on a lock nobody can use. At the old 15m it turned each failed
+  # drain into a 35m lock hold.
+  lockReleaseDelay: "5m"
 
   # ---- Drain ---------------------------------------------------------------
-  # Bounded so a Longhorn PDB that refuses eviction cannot wedge the lock
-  # forever. On timeout with forceReboot=false kured releases the lock,
-  # best-effort uncordons, and retries on the next period tick.
-  drainTimeout: "20m"
+  # Bounded so a PDB that refuses eviction cannot wedge the lock forever. On
+  # timeout with forceReboot=false kured releases the lock, best-effort
+  # uncordons, and retries the same node on the next period tick.
+  #
+  # Short on purpose. A drain that has not finished in 5m is not slow, it is
+  # blocked on something that will not yield, and every extra minute is a minute
+  # the rest of the cluster cannot patch. The old 20m also produced enough
+  # eviction-retry output (the drain helper retries "after 0s") to rotate the
+  # useful history out of the pod log.
+  drainTimeout: "5m"
   forceReboot: false
 
   # Soft taint on nodes that are waiting their turn, so pods evicted from the
   # node currently rebooting do not land on a node about to reboot next.
   # PreferNoSchedule, so it can never make a pod unschedulable.
+  #
+  # Only applied on the lock-contention path, AFTER the blocker check passes: a
+  # node stopped by a blocker never reaches it. Keeping the blocker list tight
+  # (below) is what keeps this working.
   preferNoScheduleTaint: "weave.works/kured-node-reboot"
 
   # weave.works/kured-reboot-in-progress + kured-most-recent-reboot-needed
-  # node annotations. Cheap, and they make `kubectl get node -o yaml` tell you
-  # what happened at 03:00 without reading pod logs.
+  # node annotations. Cheap, and they are written after the window and sentinel
+  # checks but BEFORE the blocker and lock checks, which makes them the fastest
+  # way to prove kured reached the gate and to see what stopped it there.
   annotateNodes: true
 
   # ---- Reboot blockers (the real Longhorn/etcd guard) ----------------------
@@ -93,27 +153,56 @@ configuration:
   #
   #   alertFilterMatchOnly: true  -> the regexp is an ALLOW-list of blockers.
   #                                  With the default (false) the regexp is an
-  #                                  EXCLUDE-list and kube-prometheus-stack's
+  #                                  EXCLUDE-list and kube-prometheus-stack
   #                                  always-firing Watchdog alert would block
   #                                  every reboot forever.
-  #   alertFiringOnly: false      -> pending alerts count too. Deliberate:
-  #                                  LonghornVolumeDegraded has `for: 20m`, so
-  #                                  waiting for it to fire would be useless as
-  #                                  a gate. Pending means "degraded right now".
+  #   alertFiringOnly: true       -> pending alerts do NOT count.
+  #
+  # alertFiringOnly MUST be true given what is in the list. With false, kured
+  # ignores alertstate entirely, so an alert counts the instant its expression
+  # is true and its `for:` is irrelevant. Every reboot-caused alert would then
+  # block from the first second of the first reboot, and the widened `for:`
+  # durations in longhorn-extras and monitoring-extras -- which exist precisely
+  # to survive a kured reboot -- would buy nothing.
+  #
+  # NOTHING IN THIS LIST MAY BE A NORMAL CONSEQUENCE OF LOSING ONE NODE.
+  # concurrency: 1 already guarantees only one node is intentionally down, so an
+  # alert that fires *because* a node rebooted is not a safety gate, it is a
+  # self-deadlock. Removed for exactly that reason, do not add them back:
+  #   KubeNodeNotReady / KubeNodeUnreachable  the rebooting node, by definition
+  #   LonghornNodeDown                        goes down with it
+  #   LonghornVolumeDegraded                  replicas on that node drop
+  #   EtcdMembersDegraded                     count(up{job="etcd"}==1)==2 IS
+  #                                           the 1-of-3 reboot state
+  #   EtcdNoLeader                            expected if the leader reboots
+  #   EtcdPeerUnreachable                     rate over 5m stays >0 for 5m
+  #                                           AFTER the peer is healthy again
+  # Their jobs are done instead by KuredBlockLonghornRebuilding and
+  # KuredBlockUnexpectedNodeDown in
+  # apps/monitoring-extras/prometheusrule-kured-blockers.yaml, which are written
+  # so that a kured reboot does not trip them.
+  #
+  # Kept, because none of these is produced by one node going down cleanly:
+  #   LonghornVolumeFaulted / ReadOnly  data already at risk
+  #   EtcdQuorumLost                    count(..) < 2, false at 2-of-3
   #
   # VERIFY THE SERVICE NAME BEFORE APPLYING:
   #   kubectl -n monitoring get svc | grep prometheus
   # If the Prometheus query fails, kured treats that as blocked (fail-safe).
   prometheusUrl: "http://kube-prom-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090"
   alertFilterMatchOnly: true
-  alertFiringOnly: false
-  alertFilterRegexp: "^(LonghornVolumeDegraded|LonghornVolumeFaulted|LonghornVolumeReadOnly|LonghornNodeDown|EtcdNoLeader|EtcdMembersDegraded|EtcdQuorumLost|EtcdPeerUnreachable|KubeNodeNotReady|KubeNodeUnreachable)$"
+  alertFiringOnly: true
+  alertFilterRegexp: "^(LonghornVolumeFaulted|LonghornVolumeReadOnly|EtcdQuorumLost|KuredBlockLonghornRebuilding|KuredBlockUnexpectedNodeDown)$"
 
   logFormat: text
   metricsPort: 8080
 
-# ServiceMonitor + headless Service for kured_reboot_required.
-# `release: kube-prom` is mandatory or kube-prom's serviceMonitorSelector
+# ServiceMonitor + Service for kured_reboot_required, the only metric kured
+# 1.23.0 exports. metrics.create alone is enough: the chart service.yaml is
+# guarded by `or .Values.service.create .Values.metrics.create`, and the
+# ServiceMonitor scrapes the Service Endpoints, so every pod is scraped
+# individually and the metric carries a per-node `node` label.
+# `release: kube-prom` is mandatory or the kube-prom serviceMonitorSelector
 # ignores it and every kured alert evaluates on an empty vector.
 metrics:
   create: true

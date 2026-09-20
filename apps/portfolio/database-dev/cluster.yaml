@@ -15,6 +15,14 @@ metadata:
   namespace: portfolio-dev
 spec:
   instances: 1
+
+  # MUST stay false while instances is 1. CNPG's primary PDB is minAvailable: 1
+  # over a single pod, so disruptionsAllowed is 0 permanently and no eviction can
+  # ever satisfy it. That wedges kured and stops ALL node patching, not just this
+  # node's -- see apps/kured/values.yaml, "WHY DRAINS MUST BE ABLE TO SUCCEED".
+  # Set back to true (or drop it) if instances ever goes to 2+, because then CNPG
+  # can switch over and the PDB will permit eviction on its own.
+  enablePDB: false
   # Keep this on the same major version as portfolio-db.
   imageName: ghcr.io/cloudnative-pg/postgresql:18
   storage:

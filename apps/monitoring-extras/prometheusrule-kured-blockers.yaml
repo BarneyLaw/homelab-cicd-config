@@ -1,0 +1,84 @@
+# apps/monitoring-extras/prometheusrule-kured-blockers.yaml
+#
+# MACHINE-CONSUMED ALERTS. These exist only so kured can read them back out of
+# the ALERTS series; no human is meant to be paged by them. They are named in
+# apps/kured/values.yaml alertFilterRegexp, which is an ALLOW-list, so the names
+# here and there must be changed together or the gate silently disappears.
+#
+# When a real Alertmanager receiver is configured, route severity=none to null,
+# or every Sunday reboot will notify.
+#
+# THE RULE THESE REPLACE, AND WHY
+#   The allow-list used to contain LonghornVolumeDegraded, LonghornNodeDown,
+#   KubeNodeNotReady, KubeNodeUnreachable, EtcdMembersDegraded, EtcdNoLeader and
+#   EtcdPeerUnreachable. Every one of those is a NORMAL consequence of one node
+#   going down, so with concurrency: 1 they could only ever block kured from
+#   doing the thing that caused them. Worse, a node that stayed down for any
+#   other reason kept them active permanently and stopped all patching.
+#
+#   The two rules below express what those were reaching for -- "the cluster
+#   cannot currently absorb losing a node" -- in a form a kured reboot does not
+#   trip. Both were validated against live data on 2026-09-20.
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kured-blockers
+  namespace: monitoring
+  labels:
+    release: kube-prom         # required for the kube-prom ruleSelector
+spec:
+  groups:
+    - name: kured.blockers
+      rules:
+        # Longhorn is still rebuilding replicas, so the cluster has not yet
+        # re-absorbed the last reboot and must not lose another node.
+        #
+        # This is the gate the old LonghornVolumeDegraded entry was meant to be.
+        # It works here because kured now runs with alertFiringOnly: true, so
+        # `for:` is honoured: a reboot makes this fire ~3m in and keeps it firing
+        # until the rebuild completes, which is exactly the desired hold. The
+        # paging rule of the same shape in apps/longhorn-extras keeps its
+        # for: 20m and is left alone -- do not merge the two, they want
+        # different durations.
+        - alert: KuredBlockLonghornRebuilding
+          expr: max by (pvc_namespace, pvc, volume) (longhorn_volume_robustness{state="degraded"}) == 1
+          for: 3m
+          labels:
+            severity: none
+          annotations:
+            summary: "Longhorn volume {{ $labels.pvc }} degraded, holding kured"
+            description: >-
+              A replica rebuild is in progress, so kured will not take the
+              reboot lock. Expected for a while after each node reboot. If this
+              never clears, a replica cannot rebuild and patching stays stopped:
+              check the Longhorn UI and `kubectl -n longhorn-system get
+              volumes.longhorn.io -o custom-columns=NAME:.metadata.name,ROBUSTNESS:.status.robustness`
+
+        # A node is down that kured did NOT take down. kured cordons before it
+        # drains, so the node it is working on always carries
+        # kube_node_spec_unschedulable == 1 and is excluded by the `unless`.
+        # Anything left is an unplanned failure, and taking a second node down
+        # on top of it is what this blocks.
+        #
+        # This is the node-aware version of KubeNodeNotReady. kured's Prometheus
+        # blocker queries ALERTS cluster-wide with no node scoping, so the
+        # exclusion has to live in the expression, not in kured.
+        #
+        # for: 5m absorbs the scrape-ordering gap between a node going NotReady
+        # and its unschedulable flag being observed.
+        - alert: KuredBlockUnexpectedNodeDown
+          expr: |
+            count(
+              (kube_node_status_condition{condition="Ready",status="true"} == 0)
+              unless on (node) (kube_node_spec_unschedulable == 1)
+            ) > 0
+          for: 5m
+          labels:
+            severity: none
+          annotations:
+            summary: "A node is down that kured did not cordon"
+            description: >-
+              At least one node is NotReady without being cordoned, so it is an
+              unplanned failure rather than a kured drain. kured will not start
+              a reboot until it clears. `kubectl get nodes`
