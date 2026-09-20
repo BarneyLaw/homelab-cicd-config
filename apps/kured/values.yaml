@@ -29,6 +29,12 @@
 #   never got a turn. Neither node had rebooted in three weeks. The fix was
 #   enablePDB: false on all three clusters.
 #
+#   Verified end to end on 2026-09-20 by widening endTime for one afternoon run:
+#   legion-1 and sol, stuck for 21 and 20 days, both patched in 14 minutes with a
+#   3m20s lock handoff between them. During sol's reboot EtcdMembersDegraded,
+#   EtcdPeerUnreachable and LonghornNodeDown were all pending -- under the old
+#   allow-list every one of them would have blocked the next node.
+#
 #   Longhorn instance-manager PDBs also report disruptionsAllowed: 0 at rest,
 #   but that is fine: node-drain-policy is allow-if-replica-is-stopped, so
 #   Longhorn drops the PDB once the volume detaches. It only stays stuck when a
@@ -81,11 +87,7 @@ configuration:
   rebootDays:
     - su
   startTime: "02:00"
-  # !!! TEMPORARY -- 2026-09-20 verification run only. REVERT TO "06:00". !!!
-  # Widened to let kured act on a Sunday afternoon so the patching fix could be
-  # verified without waiting a week. Leaving this in place means Sunday reboots
-  # can happen until 16:00 local instead of 06:00.
-  endTime: "16:00"
+  endTime: "06:00"
 
   # Granularity of the reboot-decision loop: how long a node waits before it
   # re-checks the window, the sentinel, the blockers and the lock. Every failed
