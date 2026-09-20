@@ -41,13 +41,14 @@
 #
 # WINDOW BUDGET (5 nodes, 02:00-06:00 = 240m)
 #   Measured against the 1.23.0 source, not estimated:
-#     drain ~2m + reboot ~3m + Ready ~2m
+#     drain 1-4m (4m on nodes hosting CNPG primaries, see drainTimeout below)
+#     + reboot ~3m + Ready ~2m
 #     + 30-90s  the rebooted node fresh pod runs delaytick.New(.., 1m) before
 #               it checks the lock it is still holding
 #     + lockReleaseDelay  Release() is a synchronous time.Sleep, not a deadline
 #     + up to period      the next node only notices the free lock on its tick
 #     + period per blocked tick, and there is usually at least one
-#   = ~23m per node at the settings below, so ~115m for 5 nodes.
+#   = ~25-27m per node at the settings below, so ~135m for 5 nodes.
 #
 #   The old 15m/10m settings made this ~45-60m per node, i.e. 225-300m against a
 #   240m window: the last one or two nodes were silently abandoned every week,
@@ -124,12 +125,23 @@ configuration:
   # timeout with forceReboot=false kured releases the lock, best-effort
   # uncordons, and retries the same node on the next period tick.
   #
-  # Short on purpose. A drain that has not finished in 5m is not slow, it is
-  # blocked on something that will not yield, and every extra minute is a minute
-  # the rest of the cluster cannot patch. The old 20m also produced enough
-  # eviction-retry output (the drain helper retries "after 0s") to rotate the
-  # useful history out of the pod log.
-  drainTimeout: "5m"
+  # Sized from the slowest LEGITIMATE drain, not padded. kured passes
+  # --drain-grace-period as -1 (chart leaves it unset, kured defaults to -1),
+  # which means each pod gets its OWN terminationGracePeriodSeconds. The CNPG
+  # pods carry 1800s there, from the operator stopDelay default -- but the real
+  # bound is smartShutdownTimeout (180s), after which CNPG escalates to a fast
+  # shutdown. legion-1 hosts two CNPG primaries, so with clients holding
+  # connections open a healthy drain there is ~3m of shutdown plus ~30-60s to
+  # detach the RWO Longhorn volume: call it 4m.
+  #
+  # 10m is that worst case with margin. Do NOT drop this to 5m: that is inside
+  # the legitimate range and would time out healthy drains, putting the node
+  # straight back into the retry loop this whole change exists to remove. The
+  # old 20m was the other failure -- far beyond any legitimate drain, so an
+  # unevictable pod monopolised two thirds of the window, and the eviction-retry
+  # output (the drain helper retries "after 0s") rotated the useful history out
+  # of the pod log.
+  drainTimeout: "10m"
   forceReboot: false
 
   # Soft taint on nodes that are waiting their turn, so pods evicted from the
