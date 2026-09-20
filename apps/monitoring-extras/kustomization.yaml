@@ -10,6 +10,7 @@ resources:
 - prometheusrule-etcd-alert.yaml
 - prometheusrule-kured-alert.yaml
 - prometheusrule-kured-blockers.yaml
+- alertmanagerconfig.yaml
 - alertmanager-notify-sealedsecret.yaml
 
 configMapGenerator:

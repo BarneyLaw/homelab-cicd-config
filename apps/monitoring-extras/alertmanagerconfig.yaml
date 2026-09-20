@@ -1,0 +1,129 @@
+# apps/monitoring-extras/alertmanagerconfig.yaml
+#
+# The whole Alertmanager routing tree. Referenced as the GLOBAL config by
+# apps/monitoring/values-monitoring.yaml via
+#   alertmanager.alertmanagerSpec.alertmanagerConfiguration.name
+# so it is not namespace-scoped the way an ordinary AlertmanagerConfig is.
+#
+# WHY A CRD AND NOT alertmanager.config IN THE CHART VALUES
+#   Discord's webhook URL is a credential, so it must come from a Secret. The
+#   raw-config path cannot do that: Prometheus Operator re-parses the config with
+#   its own Go structs, and in v0.90.1 `discordConfig` has only `webhook_url` --
+#   a plain string, no webhook_url_file. Alertmanager 0.32.1 itself DOES support
+#   webhook_url_file (amtool check-config accepts it), which makes this trap easy
+#   to walk into: the config is valid to Alertmanager and rejected by the
+#   operator, which then silently keeps serving the PREVIOUS generated config:
+#     failed to initialize from secret: yaml: unmarshal errors:
+#     field webhook_url_file not found in type alertmanager.discordConfig
+#   This CRD's discordConfigs.apiURL is a SecretKeySelector, which is the
+#   supported way to keep the URL out of git.
+#
+# TIMEZONE WARNING
+#   AlertmanagerConfig's timeIntervals has NO `location` field (unlike raw
+#   Alertmanager config), so every time below is UTC. kured's window is
+#   Sunday 02:00-06:00 Asia/Singapore, which is SATURDAY 18:00-22:00 UTC.
+#   If kured's window in apps/kured/values.yaml ever moves, convert again.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: homelab
+  namespace: monitoring
+spec:
+  route:
+    receiver: discord
+    groupBy: ["alertname", "namespace"]
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 12h
+    routes:
+      # Always firing by design. Sending it to "null" means a dead Prometheus or
+      # Alertmanager produces silence, which is indistinguishable from healthy --
+      # the same bug class as the outage this repo just fixed. Closing it needs an
+      # EXTERNAL heartbeat (healthchecks.io / Dead Man's Snitch): swap this to a
+      # webhookConfigs receiver whose url is that check-in URL, and it alarms when
+      # the pings stop.
+      - receiver: "null"
+        matchers:
+          - name: alertname
+            value: Watchdog
+            matchType: "="
+
+      - receiver: "null"
+        matchers:
+          - name: alertname
+            value: InfoInhibitor
+            matchType: "="
+
+      # The KuredBlock* rules in prometheusrule-kured-blockers.yaml exist only so
+      # kured can read them out of the ALERTS series. They carry severity: none.
+      # Without this route every Sunday reboot would notify.
+      - receiver: "null"
+        matchers:
+          - name: severity
+            value: none
+            matchType: "="
+
+      # Alerts a HEALTHY kured reboot causes. Muted only inside the reboot
+      # window; a node going NotReady on a Tuesday still notifies.
+      #
+      # Each has an UNMUTED backstop that still catches a real failure during the
+      # window, which is why this is not simply hiding problems:
+      #   KubeNodeNotReady/Unreachable  -> KuredDrainStuck (30m), KuredNodeStuckCordoned (45m)
+      #   LonghornNodeDown/VolumeDegraded -> LonghornVolumeFaulted, LonghornVolumeReadOnly
+      #   EtcdMembersDegraded/NoLeader/PeerUnreachable -> EtcdQuorumLost
+      # Do not extend this list without adding the same kind of backstop.
+      - receiver: discord
+        matchers:
+          - name: alertname
+            value: "KubeNodeNotReady|KubeNodeUnreachable|LonghornNodeDown|LonghornVolumeDegraded|EtcdMembersDegraded|EtcdNoLeader|EtcdPeerUnreachable"
+            matchType: "=~"
+        muteTimeIntervals:
+          - kured-reboot-window
+
+      # Everything genuinely urgent, KuredDrainStuck included.
+      - receiver: discord
+        matchers:
+          - name: severity
+            value: critical
+            matchType: "="
+        groupWait: 10s
+        repeatInterval: 1h
+
+  # UTC. See TIMEZONE WARNING above: this is Sunday 02:00-06:00 Asia/Singapore.
+  muteTimeIntervals:
+    - name: kured-reboot-window
+      timeIntervals:
+        - weekdays: ["saturday"]
+          times:
+            - startTime: "18:00"
+              endTime: "22:00"
+
+  receivers:
+    - name: "null"
+    - name: discord
+      discordConfigs:
+        - apiURL:
+            name: alertmanager-notify
+            key: discord-url
+          sendResolved: true
+
+  # Without these a single node failure notifies three times.
+  inhibitRules:
+    - sourceMatch:
+        - name: severity
+          value: critical
+          matchType: "="
+      targetMatch:
+        - name: severity
+          value: "warning|info"
+          matchType: "=~"
+      equal: ["namespace", "alertname"]
+    - sourceMatch:
+        - name: severity
+          value: warning
+          matchType: "="
+      targetMatch:
+        - name: severity
+          value: info
+          matchType: "="
+      equal: ["namespace", "alertname"]

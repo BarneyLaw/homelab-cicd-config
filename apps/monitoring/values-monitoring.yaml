@@ -56,103 +56,23 @@ prometheus:
 
 alertmanager:
   alertmanagerSpec:
-    # Mounts at /etc/alertmanager/secrets/alertmanager-notify/<key>.
-    # Create it with (the URL never enters git, only the sealed form does):
-    #   kubectl -n monitoring create secret generic alertmanager-notify \
-    #     --from-literal=discord-url='https://discord.com/api/webhooks/...' \
-    #     --dry-run=client -o yaml \
-    #   | kubeseal --cert sealed-secrets-pub.pem --format yaml \
-    #     > apps/monitoring-extras/alertmanager-notify-sealedsecret.yaml
-    # then add that filename to apps/monitoring-extras/kustomization.yaml.
-    secrets:
-      - alertmanager-notify
-
-  # REPLACES the chart default config, which had exactly one receiver -- "null" --
-  # and route.receiver: "null". Every alert in the cluster was discarded.
-  # KuredNodeStuckCordoned genuinely fired during the 2026-09 patching outage and
-  # went straight in the bin, which is why a 21-day outage went unnoticed.
-  config:
-    global:
-      resolve_timeout: 5m
-
-    route:
-      group_by: ["alertname", "namespace"]
-      group_wait: 30s
-      group_interval: 5m
-      repeat_interval: 12h
-      receiver: discord
-      routes:
-        # Always-firing by design; it exists to prove the pipeline is alive.
-        # NOTE: sending it to null means a dead Prometheus or Alertmanager
-        # produces silence, which is indistinguishable from "all clear" -- the
-        # exact failure class this whole change set is about. Closing that gap
-        # needs an EXTERNAL heartbeat (healthchecks.io, Dead Man's Snitch): point
-        # this route at a webhook receiver whose URL is that check-in URL, and it
-        # alarms when the pings stop. Left as null for now because it needs an
-        # account this repo does not have.
-        - matchers: ['alertname = "Watchdog"']
-          receiver: "null"
-
-        - matchers: ['alertname = "InfoInhibitor"']
-          receiver: "null"
-
-        # Machine-consumed alerts: the KuredBlock* rules in
-        # apps/monitoring-extras/prometheusrule-kured-blockers.yaml exist only so
-        # kured can read them out of the ALERTS series. They carry severity: none.
-        # Without this route every Sunday reboot would notify.
-        - matchers: ['severity = "none"']
-          receiver: "null"
-
-        # Alerts that a healthy kured reboot CAUSES. Muted only inside the reboot
-        # window, delivered normally the rest of the week -- a node going NotReady
-        # on a Tuesday is still a page.
-        #
-        # Every entry here has an UNMUTED escalation that catches a real failure
-        # during the window, which is why this is not just hiding problems:
-        #   KubeNodeNotReady/Unreachable -> KuredDrainStuck (30m), KuredNodeStuckCordoned (45m)
-        #   LonghornNodeDown/VolumeDegraded -> LonghornVolumeFaulted, LonghornVolumeReadOnly
-        #   EtcdMembersDegraded/NoLeader/PeerUnreachable -> EtcdQuorumLost
-        # Do not extend this list without adding the same kind of backstop.
-        - matchers:
-            - 'alertname =~ "KubeNodeNotReady|KubeNodeUnreachable|LonghornNodeDown|LonghornVolumeDegraded|EtcdMembersDegraded|EtcdNoLeader|EtcdPeerUnreachable"'
-          receiver: discord
-          mute_time_intervals:
-            - kured-reboot-window
-
-        # Everything genuinely urgent, including KuredDrainStuck.
-        - matchers: ['severity = "critical"']
-          receiver: discord
-          group_wait: 10s
-          repeat_interval: 1h
-
-    # Sunday 02:00-06:00, same window as apps/kured/values.yaml. Keep the two in
-    # sync: if the kured window moves, this must move with it or you get a weekly
-    # burst of reboot noise (or a blind spot).
-    time_intervals:
-      - name: kured-reboot-window
-        time_intervals:
-          - weekdays: ["sunday"]
-            times:
-              - start_time: "02:00"
-                end_time: "06:00"
-            location: "Asia/Singapore"
-
-    receivers:
-      - name: "null"
-      - name: discord
-        discord_configs:
-          - webhook_url_file: /etc/alertmanager/secrets/alertmanager-notify/discord-url
-            send_resolved: true
-
-    # Carried over from the chart default -- replacing `config` drops these
-    # otherwise, and without them a single node failure pages three times.
-    inhibit_rules:
-      - source_matchers: ['severity = "critical"']
-        target_matchers: ['severity =~ "warning|info"']
-        equal: ["namespace", "alertname"]
-      - source_matchers: ['severity = "warning"']
-        target_matchers: ['severity = "info"']
-        equal: ["namespace", "alertname"]
-      - source_matchers: ['alertname = "InfoInhibitor"']
-        target_matchers: ['severity = "info"']
-        equal: ["namespace"]
+    # The entire routing tree lives in
+    # apps/monitoring-extras/alertmanagerconfig.yaml as an AlertmanagerConfig CR,
+    # pointed at here so it is the GLOBAL config rather than a namespace-scoped
+    # one. That file explains why, but the short version: Discord's webhook URL
+    # is a credential, and the raw `alertmanager.config` path cannot read one
+    # from a Secret -- Prometheus Operator v0.90.1's discordConfig struct has
+    # only `webhook_url`, no webhook_url_file. The CRD's discordConfigs.apiURL is
+    # a SecretKeySelector, which can.
+    #
+    # The chart's own default alertmanager.config (one receiver, "null") is
+    # deliberately left alone below; the operator ignores it while
+    # alertmanagerConfiguration is set. If this reference is ever removed,
+    # alerting silently reverts to discarding everything -- which is exactly how
+    # the 2026-09 kured outage went unnoticed for three weeks. Check with:
+    #   kubectl -n monitoring get secret \
+    #     alertmanager-kube-prom-kube-prometheus-alertmanager-generated \
+    #     -o jsonpath='{.data.alertmanager\.yaml\.gz}' | base64 -d | gunzip
+    # and confirm a `discord` receiver is present.
+    alertmanagerConfiguration:
+      name: homelab
