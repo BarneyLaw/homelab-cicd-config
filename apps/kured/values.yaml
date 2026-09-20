@@ -81,7 +81,11 @@ configuration:
   rebootDays:
     - su
   startTime: "02:00"
-  endTime: "06:00"
+  # !!! TEMPORARY -- 2026-09-20 verification run only. REVERT TO "06:00". !!!
+  # Widened to let kured act on a Sunday afternoon so the patching fix could be
+  # verified without waiting a week. Leaving this in place means Sunday reboots
+  # can happen until 16:00 local instead of 06:00.
+  endTime: "16:00"
 
   # Granularity of the reboot-decision loop: how long a node waits before it
   # re-checks the window, the sentinel, the blockers and the lock. Every failed
