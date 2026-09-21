@@ -8,7 +8,28 @@ spec:
   sources:
     - repoURL: https://cloudnative-pg.github.io/charts
       chart: cloudnative-pg
-      targetRevision: 0.23.x   # pin to current stable
+      # chart 0.29.x -> operator 1.30.0. Check the mapping when moving this;
+      # the chart and operator version numbers are unrelated:
+      #   helm show chart cloudnative-pg/cloudnative-pg --version <x> | grep appVersion
+      #
+      # WHY THIS MOVED OFF 0.23.x (2026-09-21)
+      #   All three clusters run PostgreSQL 18, which dropped wal_write, wal_sync,
+      #   wal_write_time and wal_sync_time from pg_stat_wal (they live in
+      #   pg_stat_io now). Operator 1.25.1 still issued the pre-18 query, so the
+      #   metrics exporter failed every 30s on every instance and
+      #   CNPGCollectorErroring fired continuously:
+      #     while collecting pg_wal_stat: ERROR: column "wal_write" does not
+      #     exist (SQLSTATE 42703)
+      #   Upstream fixed it in operator 1.25.2 (#7005) -- but the 0.23.x CHART
+      #   series dead-ends at 0.23.2 / operator 1.25.1 and was never bumped to
+      #   carry it. A range pin cannot rescue you from an abandoned series, which
+      #   is the trap this comment exists to prevent next time.
+      #
+      #   Went past the minimum fix on purpose: official PostgreSQL 18 support
+      #   starts at operator 1.28.0, so 1.25.x was running PG18 unsupported and
+      #   this metric was only the visible symptom. 1.30.0 is current and has the
+      #   longest support runway.
+      targetRevision: 0.29.x
       helm:
         releaseName: cnpg      # match existing release → adopt, not duplicate
         values: |
