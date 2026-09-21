@@ -13,7 +13,20 @@ spec:
   # Set back to true (or drop it) if instances ever goes to 2+, because then CNPG
   # can switch over and the PDB will permit eviction on its own.
   enablePDB: false
-  imageName: ghcr.io/cloudnative-pg/postgresql:18
+  # PIN THE MINOR VERSION. Never a floating major tag here.
+  #
+  # With `:18` plus the CNPG default imagePullPolicy IfNotPresent, the running
+  # PostgreSQL minor is decided by whichever node the pod lands on and whenever
+  # that node last pulled the tag -- not by this file. Observed 2026-09-21: the
+  # operator upgrade rescheduled portfolio-db-1 onto legion-1, which still had a
+  # months-old `:18` in its image cache, and PostgreSQL silently went 18.6 -> 18.4.
+  # Upstream `:18` and `:18.6` were both sha256:899d3ed5 at the time; the digest
+  # actually running was sha256:17760b45, matching no current tag at all.
+  #
+  # A silent minor DOWNGRADE means losing the security fixes you think you have,
+  # and PostgreSQL does not guarantee older binaries are safe against a data
+  # directory written by a newer minor. Bump this deliberately instead.
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6
   storage:
     size: 5Gi
     storageClass: longhorn
