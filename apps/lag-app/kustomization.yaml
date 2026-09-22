@@ -8,4 +8,4 @@ resources:
 images:
 - name: ghcr.io/barneylaw/lag-app
   newName: ghcr.io/barneylaw/lag-app
-  newTag: f30f227
+  newTag: 0d7b100
