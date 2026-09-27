@@ -62,6 +62,12 @@ configMapGenerator:
     options:
       labels:
         grafana_dashboard: "1"
+  - name: grafana-dashboard-obsync-worker
+    files:
+      - dashboards/obsync-worker.json
+    options:
+      labels:
+        grafana_dashboard: "1"
 
         
 generatorOptions:

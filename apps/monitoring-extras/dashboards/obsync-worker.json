@@ -1,0 +1,1743 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "green",
+        "name": "Run succeeded",
+        "expr": "label_replace(label_replace(max by (job_name) (kube_job_status_completion_time{namespace=\"obsync\"}) * 1000 and on (job_name) ((time() - max by (job_name) (kube_job_status_completion_time{namespace=\"obsync\"})) < 1800), \"trigger\", \"manual\", \"job_name\", \".*\"), \"trigger\", \"scheduled\", \"job_name\", \"obsync-worker-[0-9]+\")",
+        "step": "2m",
+        "titleFormat": "{{job_name}} succeeded",
+        "textFormat": "A {{trigger}} worker run finished and published. Its data written and objects changed are in the Run history table. For the file-level list: kubectl -n obsync logs job/{{job_name}} (only while the pod still exists).",
+        "tagKeys": "job_name",
+        "useValueForTime": true
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "red",
+        "name": "Run failed",
+        "expr": "label_replace(label_replace(max by (job_name) (kube_job_status_start_time{namespace=\"obsync\"}) * 1000 and on (job_name) (max by (job_name) (kube_job_status_failed{namespace=\"obsync\"}) > 0) and on (job_name) ((time() - max by (job_name) (kube_job_status_start_time{namespace=\"obsync\"})) < 3 * 3600), \"trigger\", \"manual\", \"job_name\", \".*\"), \"trigger\", \"scheduled\", \"job_name\", \"obsync-worker-[0-9]+\")",
+        "step": "2m",
+        "titleFormat": "{{job_name}}: a pod failed",
+        "textFormat": "A pod of this {{trigger}} run exited non-zero (Kubernetes retries up to twice). Exit 3: another run held the store lease. Exit 4: Canvas rejected the token, which only a new token fixes. Logs: kubectl -n obsync logs job/{{job_name}}",
+        "tagKeys": "job_name",
+        "useValueForTime": true
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "blue",
+        "name": "New worker version",
+        "expr": "label_replace(max by (image) (kube_pod_container_info{namespace=\"obsync\", container=\"worker\"}) * 0 + 1 unless on (image) max by (image) (max_over_time(kube_pod_container_info{namespace=\"obsync\", container=\"worker\"}[7d] offset 30m)) and on () (count(max_over_time(kube_pod_container_info{namespace=\"obsync\", container=\"worker\"}[7d] offset 30m)) > 0), \"commit\", \"$1\", \"image\", \".*:([0-9a-f]{7,40})\")",
+        "step": "5m",
+        "titleFormat": "Worker {{commit}} first run",
+        "textFormat": "First run on ghcr.io/barneylaw/obsync-worker:{{commit}}. Code: https://github.com/BarneyLaw/obsync-man-worker/commit/{{commit}}",
+        "tagKeys": "commit",
+        "useValueForTime": false
+      }
+    ]
+  },
+  "description": "obsync worker (Canvas -> garage-obsync): run results, how much each run changed, and the health of the store it writes to.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Is the sync working?",
+      "id": 1,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "Last success",
+      "description": "Time since the CronJob last completed a run. The schedule is daily at 18:17 Asia/Singapore; ObsyncWorkerStale fires past 26h.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "time() - max(kube_cronjob_status_last_successful_time{namespace=\"obsync\", cronjob=\"obsync-worker\"})",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "Never succeeded",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 93600
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "Last run",
+      "description": "Result of the most recent scheduled run. Failed means it has been scheduled since the last success: it failed through its retries or hit the 2h deadline. See the Run history table.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(max(kube_cronjob_status_active{namespace=\"obsync\", cronjob=\"obsync-worker\"}) > 0) * 0 + 2 or (max(kube_cronjob_status_last_schedule_time{namespace=\"obsync\", cronjob=\"obsync-worker\"}) > bool (max(kube_cronjob_status_last_successful_time{namespace=\"obsync\", cronjob=\"obsync-worker\"}) or vector(0)))",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "-",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Succeeded",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "Failed",
+                  "color": "red",
+                  "index": 1
+                },
+                "2": {
+                  "text": "Running",
+                  "color": "blue",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "Next run",
+      "description": "When the CronJob will next start a Job.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max(kube_cronjob_next_schedule_time{namespace=\"obsync\", cronjob=\"obsync-worker\"}) * 1000",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeFromNow",
+          "noValue": "-",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 5,
+      "title": "Failed runs",
+      "description": "Runs in the selected time range that ended without succeeding. A run whose pod failed and then succeeded on retry is not counted here; the Run history table shows its retries.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "count(max by (job_name) (max_over_time(kube_job_status_failed{namespace=\"obsync\"}[$__range])) > 0 unless on (job_name) max by (job_name) (max_over_time(kube_job_status_succeeded{namespace=\"obsync\"}[$__range])) > 0) or vector(0)",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 6,
+      "title": "Schedule",
+      "description": "Suspended means `suspend: true` is committed in cronjob.yaml. Missing means kube-state-metrics has no CronJob: the Application is not synced or its sealed secret is absent.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max(kube_cronjob_spec_suspend{namespace=\"obsync\", cronjob=\"obsync-worker\"})",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "CronJob missing",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Active",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "Suspended",
+                  "color": "orange",
+                  "index": 1
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "color": "red",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 7,
+      "title": "Garage store",
+      "description": "Garage's own view of the cluster the worker writes to (garage-obsync). Degraded means a node or partition quorum is missing and writes may fail.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "min(cluster_healthy{namespace=\"obsync\"})",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "Not scraped",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "Healthy",
+                  "color": "green",
+                  "index": 0
+                },
+                "0": {
+                  "text": "Degraded",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "Runs",
+      "id": 8,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "id": 9,
+      "title": "Run history",
+      "description": "One row per worker Job in the selected range (Prometheus keeps 10 days; Kubernetes itself keeps only the last 3 successful Jobs). Data written and objects written/deleted are Garage's counters for the minutes around the run: ~10 objects and a few KB is a run that found nothing new (lease, manifests, run summary); more means new or changed Canvas files. Click Started to zoom to the run, or the commit to see the worker code that ran.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "label_replace(label_replace(max by (job_name) (max_over_time(kube_job_status_start_time{namespace=\"obsync\"}[$__range])), \"trigger\", \"manual\", \"job_name\", \".*\"), \"trigger\", \"scheduled\", \"job_name\", \"obsync-worker-[0-9]+\") * 1000",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (job_name) (\n    (max_over_time(kube_job_status_succeeded{namespace=\"obsync\"}[$__range]) > 0) * 0 + 2\n  or (last_over_time(kube_job_status_active{namespace=\"obsync\"}[$__range]) > 0) * 0 + 1\n  or (max_over_time(kube_job_status_failed{namespace=\"obsync\"}[$__range]) > 0) * 0\n)",
+          "refId": "B",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (job_name) (max_over_time(kube_job_status_completion_time{namespace=\"obsync\"}[$__range]) - max_over_time(kube_job_status_start_time{namespace=\"obsync\"}[$__range]))",
+          "refId": "C",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (job_name) (max_over_time(kube_job_status_failed{namespace=\"obsync\"}[$__range]))",
+          "refId": "D",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (job_name) (max_over_time(((max by (job_name) ((((time() - kube_job_status_completion_time{namespace=\"obsync\"}) > 60) < 600)) * 0 + 1) * on () group_left () (sum(increase(block_bytes_written{namespace=\"obsync\"}[15m])) / scalar(max(garage_replication_factor{namespace=\"obsync\"}))))[$__range:2m]))",
+          "refId": "E",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (job_name) (max_over_time(((max by (job_name) ((((time() - kube_job_status_completion_time{namespace=\"obsync\"}) > 60) < 600)) * 0 + 1) * on () group_left () (sum(increase(api_s3_request_counter{namespace=\"obsync\", api_endpoint=\"PutObject\"}[15m]))))[$__range:2m]))",
+          "refId": "F",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (job_name) (max_over_time(((max by (job_name) ((((time() - kube_job_status_completion_time{namespace=\"obsync\"}) > 60) < 600)) * 0 + 1) * on () group_left () (sum(increase(api_s3_request_counter{namespace=\"obsync\", api_endpoint=\"DeleteObject\"}[15m]))))[$__range:2m]))",
+          "refId": "G",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (job_name, commit) (label_replace(label_replace(max_over_time(kube_pod_container_info{namespace=\"obsync\", container=\"worker\"}[$__range]), \"commit\", \"$1\", \"image\", \".*:([0-9a-f]{7,40})\"), \"job_name\", \"$1\", \"pod\", \"(.+)-[a-z0-9]{5}\"))",
+          "refId": "H",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (job_name, reason) (label_replace(max_over_time(kube_pod_container_status_terminated_reason{namespace=\"obsync\", container=\"worker\", reason!=\"Completed\"}[$__range]), \"job_name\", \"$1\", \"pod\", \"(.+)-[a-z0-9]{5}\"))",
+          "refId": "I",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "job_name",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "filterByValue",
+          "options": {
+            "type": "exclude",
+            "match": "any",
+            "filters": [
+              {
+                "fieldName": "Value #A",
+                "config": {
+                  "id": "isNull",
+                  "options": {}
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true,
+              "Time 4": true,
+              "Time 5": true,
+              "Time 6": true,
+              "Time 7": true,
+              "Time 8": true,
+              "Time 9": true,
+              "Time": true,
+              "Value #H": true,
+              "Value #I": true
+            },
+            "indexByName": {
+              "Value #A": 0,
+              "job_name": 1,
+              "trigger": 2,
+              "Value #B": 3,
+              "Value #C": 4,
+              "Value #D": 5,
+              "reason": 6,
+              "Value #E": 7,
+              "Value #F": 8,
+              "Value #G": 9,
+              "commit": 10
+            },
+            "renameByName": {
+              "Value #A": "Started",
+              "job_name": "Job",
+              "trigger": "Trigger",
+              "Value #B": "Result",
+              "Value #C": "Duration",
+              "Value #D": "Failed pods",
+              "reason": "Failure reason",
+              "Value #E": "Data written",
+              "Value #F": "Objects written",
+              "Value #G": "Objects deleted",
+              "commit": "Worker commit"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Started",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "fields": ""
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "noValue": "",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Started"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsLocal"
+              },
+              {
+                "id": "custom.width",
+                "value": 190
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Zoom to this run",
+                    "url": "/d/obsync-worker/obsync-worker?time=${__value.raw}&time.window=3600000"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Job"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 200
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Trigger"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 95
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Result"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 105
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "2": {
+                        "text": "Succeeded",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "Running",
+                        "color": "blue",
+                        "index": 1
+                      },
+                      "0": {
+                        "text": "Failed",
+                        "color": "red",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Duration"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Failed pods"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Data written"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "decbytes"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "Objects (written|deleted)"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Worker commit"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Worker source at ${__value.text}",
+                    "url": "https://github.com/BarneyLaw/obsync-man-worker/commit/${__value.text}",
+                    "targetBlank": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 10,
+      "title": "Data written to the store",
+      "description": "Logical bytes the worker uploaded to Garage (block writes divided by the replication factor). Spikes are runs that pulled new or changed Canvas files.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(increase(block_bytes_written{namespace=\"obsync\"}[$__interval])) / scalar(max(garage_replication_factor{namespace=\"obsync\"}))",
+          "refId": "A",
+          "legendFormat": "written",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "interval": "1h",
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "barAlignment": 0,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 11,
+      "title": "Store requests",
+      "description": "S3 requests Garage served, by operation. Writes and deletes come only from the worker (and `obsync gc -apply`); reads include the Obsidian plugin. HeadObject 404s are normal: the worker checks whether an object exists before writing it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (api_endpoint) (increase(api_s3_request_counter{namespace=\"obsync\"}[$__interval]))",
+          "refId": "A",
+          "legendFormat": "{{api_endpoint}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by (api_endpoint, status_code) (increase((api_s3_error_counter{namespace=\"obsync\"} unless api_s3_error_counter{namespace=\"obsync\", api_endpoint=\"HeadObject\", status_code=\"404\"})[$__interval:]))",
+          "refId": "B",
+          "legendFormat": "error {{api_endpoint}} {{status_code}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series"
+        }
+      ],
+      "interval": "1h",
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "barAlignment": 0,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^error .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "custom.stacking",
+                "value": {
+                  "mode": "none",
+                  "group": "B"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "table",
+      "id": 12,
+      "title": "obsync alerts",
+      "description": "ObsyncWorkerStale, ObsyncWorkerLastRunFailed, ObsyncWorkerMissing and ObsyncWorkerSuspended, firing or pending. Empty is the healthy state.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "ALERTS{alertname=~\"ObsyncWorker.*\"}",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true
+            },
+            "indexByName": {
+              "alertname": 0,
+              "alertstate": 1,
+              "severity": 2
+            },
+            "renameByName": {
+              "alertname": "Alert",
+              "alertstate": "State",
+              "severity": "Severity"
+            }
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "fields": ""
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "noValue": "No obsync alerts",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "State"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "firing": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "pending": {
+                        "color": "yellow",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "row",
+      "title": "Garage store",
+      "id": 19,
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "panels": [
+        {
+          "type": "stat",
+          "id": 13,
+          "title": "Nodes connected",
+          "description": "Garage nodes this node can reach, out of those it knows. Taken from the worst-connected pod.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 32
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "min(cluster_connected_nodes{namespace=\"obsync\"}) - max(cluster_known_nodes{namespace=\"obsync\"})",
+              "refId": "A",
+              "legendFormat": "",
+              "range": false,
+              "instant": true,
+              "format": "time_series"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "value",
+            "orientation": "auto",
+            "wideLayout": true
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "-",
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "0": {
+                      "text": "All",
+                      "color": "green",
+                      "index": 0
+                    }
+                  }
+                },
+                {
+                  "type": "range",
+                  "options": {
+                    "from": -100,
+                    "to": -1,
+                    "result": {
+                      "text": "Missing nodes",
+                      "color": "red",
+                      "index": 1
+                    }
+                  }
+                }
+              ],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "id": 14,
+          "title": "Partitions with quorum",
+          "description": "Partitions where a write quorum is available. Below 100% some objects cannot be written.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 32
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "min(cluster_partitions_quorum{namespace=\"obsync\"}) / max(cluster_partitions{namespace=\"obsync\"})",
+              "refId": "A",
+              "legendFormat": "",
+              "range": false,
+              "instant": true,
+              "format": "time_series"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "value",
+            "orientation": "auto",
+            "wideLayout": true
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "noValue": "-",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "id": 15,
+          "title": "Resync queue",
+          "description": "Blocks waiting to be copied between nodes. Rises after a node reboot and should drain back to 0.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 32
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "sum(block_resync_queue_length{namespace=\"obsync\"})",
+              "refId": "A",
+              "legendFormat": "",
+              "range": false,
+              "instant": true,
+              "format": "time_series"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "value",
+            "orientation": "auto",
+            "wideLayout": true
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "-",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "id": 16,
+          "title": "Resync errors",
+          "description": "Blocks Garage has repeatedly failed to resync. Non-zero needs a look: `garage block list-errors`.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 32
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "sum(block_resync_errored_blocks{namespace=\"obsync\"})",
+              "refId": "A",
+              "legendFormat": "",
+              "range": false,
+              "instant": true,
+              "format": "time_series"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "value",
+            "orientation": "auto",
+            "wideLayout": true
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "-",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "id": 17,
+          "title": "Lowest disk free",
+          "description": "Free space on the fullest node's data volume.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 32
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "min(garage_local_disk_avail{namespace=\"obsync\", volume=\"data\"} / garage_local_disk_total{namespace=\"obsync\", volume=\"data\"})",
+              "refId": "A",
+              "legendFormat": "",
+              "range": false,
+              "instant": true,
+              "format": "time_series"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "value",
+            "orientation": "auto",
+            "wideLayout": true
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "noValue": "-",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 0.1
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.2
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "type": "stat",
+          "id": 18,
+          "title": "Garage version",
+          "description": "Running Garage release.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 32
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "expr": "count by (version) (garage_build_info{namespace=\"obsync\"})",
+              "refId": "A",
+              "legendFormat": "{{version}}",
+              "range": false,
+              "instant": true,
+              "format": "time_series"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "none",
+            "graphMode": "none",
+            "justifyMode": "center",
+            "textMode": "name",
+            "orientation": "auto",
+            "wideLayout": true
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "noValue": "-",
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Runbook",
+      "id": 21,
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "panels": [
+        {
+          "type": "text",
+          "id": 20,
+          "title": "How the obsync worker runs",
+          "gridPos": {
+            "h": 18,
+            "w": 24,
+            "x": 0,
+            "y": 33
+          },
+          "options": {
+            "mode": "markdown",
+            "content": "**Schedule.** Daily at **18:17 Asia/Singapore**, `concurrencyPolicy: Forbid`, 2 retries, 2h deadline. A failed run changes nothing the plugin sees: `latest` is only published at the end.\n\n**Annotations** (toggle at the top; click a marker for details):\n- **Run succeeded** (green) / **Run failed** (red): one per worker Job.\n- **New worker version** (blue): the first run on a new image, with a link to the commit.\n\n**Exactly which files a run changed** is not in Prometheus: the worker keeps no metrics of its own yet. It is in two places:\n- The run's log, while its pod still exists (the last 3 successful Jobs, until a node drain deletes them):\n```\nkubectl -n obsync logs job/<Job> | jq -c 'select(.msg==\"latest.published\" or .msg==\"course.done\")'\n```\n- The durable run summary in the bucket, `runs/<run_id>.json`, and each course's change log:\n```\nkubectl -n obsync create job --from=cronjob/obsync-worker obsync-log --dry-run=client -o json \\\n| jq '.spec.template.spec.containers[0].command = [\"/usr/local/bin/obsync\"]\n    | .spec.template.spec.containers[0].args = [\"log\", \"<course-id>\"]' \\\n| kubectl apply -f - && kubectl -n obsync wait --for=condition=complete job/obsync-log \\\n&& kubectl -n obsync logs job/obsync-log && kubectl -n obsync delete job obsync-log\n```\n\n**Exit codes:** 0 ok, 1 failed, 2 configuration, 3 another run holds the store lease, **4 Canvas rejected the token** (NUS tokens expire; reseal a new one, retries will not help).\n\n**Run it now:** `kubectl -n obsync create job --from=cronjob/obsync-worker obsync-manual-$(date +%s)`\n\nFull background: `apps/obsync-worker/README.md`.\n",
+            "code": {
+              "language": "shell",
+              "showLineNumbers": false,
+              "showMiniMap": false
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": [
+    "homelab",
+    "obsync",
+    "cronjob"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "obsync: Canvas Sync",
+  "uid": "obsync-worker",
+  "version": 1,
+  "weekStart": ""
+}
