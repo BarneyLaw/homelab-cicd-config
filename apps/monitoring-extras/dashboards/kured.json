@@ -1,0 +1,1309 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "green",
+        "name": "Kernel update",
+        "expr": "label_replace((node_boot_time_seconds * 1000) * on (instance) group_left (nodename, release, version) (max by (instance, nodename, release, version) (node_uname_info) unless on (instance, release) max_over_time(node_uname_info[2h] offset 30m)) * on (instance) group_left (previous_release) topk by (instance) (1, label_replace(max by (instance, release) (max_over_time(node_uname_info[2h] offset 30m)) unless on (instance, release) node_uname_info, \"previous_release\", \"$1\", \"release\", \"(.*)\")), \"pkg_version\", \"$1-$2.$2\", \"release\", \"(\\\\d+\\\\.\\\\d+\\\\.\\\\d+)-(\\\\d+)-.*\")",
+        "step": "5m",
+        "titleFormat": "{{nodename}}: kernel updated",
+        "textFormat": "Rebooted by kured from {{previous_release}} to {{release}} ({{version}}). Changelog and CVEs fixed: https://launchpad.net/ubuntu/+source/linux/{{pkg_version}}",
+        "tagKeys": "nodename",
+        "useValueForTime": true
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "purple",
+        "name": "Microcode update",
+        "expr": "(node_boot_time_seconds * 1000) * on (instance) group_left (microcode) (max by (instance, microcode) (node_cpu_info) unless on (instance, microcode) max by (instance, microcode) (max_over_time(node_cpu_info[2h] offset 30m))) * on (instance) group_left (nodename) max by (instance, nodename) (node_uname_info)",
+        "step": "5m",
+        "titleFormat": "{{nodename}}: CPU microcode updated",
+        "textFormat": "Came back with CPU microcode {{microcode}}. Microcode only loads at boot, so this was part of the reason kured rebooted the node.",
+        "tagKeys": "nodename",
+        "useValueForTime": true
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "red",
+        "name": "Reboot, nothing updated",
+        "expr": "(node_boot_time_seconds * 1000) * on (instance) group_left (nodename, release) max by (instance, nodename, release) (node_uname_info) and on (instance) (changes(node_boot_time_seconds[30m]) > 0) unless on (instance) (max by (instance, nodename, release, version) (node_uname_info) unless on (instance, release) max_over_time(node_uname_info[2h] offset 30m)) unless on (instance) (max by (instance, microcode) (node_cpu_info) unless on (instance, microcode) max by (instance, microcode) (max_over_time(node_cpu_info[2h] offset 30m)))",
+        "step": "5m",
+        "titleFormat": "{{nodename}}: rebooted, no update",
+        "textFormat": "The node rebooted but is still on kernel {{release}} with unchanged microcode. kured does not do this, so it was a power cut, crash, or manual reboot, or the node booted back into its old kernel (check that it is not still showing Reboot pending).",
+        "tagKeys": "nodename",
+        "useValueForTime": true
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "yellow",
+        "name": "Reboot became required",
+        "expr": "max by (node) (kured_reboot_required) == 1 unless on (node) max by (node) (max_over_time(kured_reboot_required[1h] offset 10m)) == 1",
+        "step": "5m",
+        "titleFormat": "{{node}}: reboot now required",
+        "textFormat": "unattended-upgrades installed a new kernel or CPU microcode on {{node}}. kured will reboot it in the next Sunday 02:00-06:00 window.",
+        "tagKeys": "node",
+        "useValueForTime": false
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "orange",
+        "name": "Cordoned",
+        "expr": "max by (node) (kube_node_spec_unschedulable) == 1",
+        "step": "1m",
+        "titleFormat": "{{node}}: cordoned",
+        "textFormat": "Unschedulable. During a Sunday window this is kured holding the lock while it drains and reboots {{node}} (normally a few minutes). Much longer means the drain is stuck.",
+        "tagKeys": "node",
+        "useValueForTime": false
+      }
+    ]
+  },
+  "description": "Automated node patching: kured reboot state, kernel updates applied, and what is blocking it.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Is patching working?",
+      "id": 1,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "Pending reboot",
+      "description": "Nodes whose running kernel (or CPU microcode) is older than what is installed, per /usr/local/sbin/kured-reboot-required. Non-zero midweek is normal: unattended-upgrades installs at 01:30 daily and kured reboots only on Sunday 02:00-06:00 (Asia/Singapore). Non-zero after a Sunday window means the window did not finish.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(kured_reboot_required)",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "kured pods",
+      "description": "Ready kured pods vs. nodes that should run one. A node without a kured pod is never patched and never reports kured_reboot_required.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "kube_daemonset_status_number_ready{namespace=\"kube-system\", daemonset=\"kured\"} - kube_daemonset_status_desired_number_scheduled{namespace=\"kube-system\", daemonset=\"kured\"}",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "kured not scraped",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "All ready",
+                  "color": "green",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "range",
+              "options": {
+                "from": -100,
+                "to": -1,
+                "result": {
+                  "text": "Missing pods",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "Blockers firing",
+      "description": "Alerts in kured's allow-list (alertFilterRegexp in apps/kured/values.yaml) that are firing now. While any fires, kured will not take the reboot lock. KuredBlockLonghornRebuilding is expected for a few minutes after each reboot.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "count(ALERTS{alertstate=\"firing\", alertname=~\"LonghornVolumeFaulted|LonghornVolumeReadOnly|EtcdQuorumLost|KuredBlockLonghornRebuilding|KuredBlockUnexpectedNodeDown\"}) or vector(0)",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 5,
+      "title": "kured alerts",
+      "description": "KuredDrainStuck, KuredNodeStuckCordoned, KuredRebootPendingTooLong, KuredMetricsMissing, KuredDaemonSetDegraded. Any of these means patching is stalled or unobservable.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "count(ALERTS{alertstate=\"firing\", alertname=~\"KuredRebootPendingTooLong|KuredNodeStuckCordoned|KuredMetricsMissing|KuredDaemonSetDegraded|KuredDrainStuck\"}) or vector(0)",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "noValue": "0",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 6,
+      "title": "Last reboot",
+      "description": "Latest boot across all nodes. Should be a Sunday morning whenever a kernel update landed that week.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max(node_boot_time_seconds) * 1000",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeFromNow",
+          "noValue": "-",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 7,
+      "title": "Longest uptime",
+      "description": "Uptime of the node that has gone longest without a reboot. Only a problem if that node also shows Reboot pending: an up-to-date node has no reason to reboot.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "time() - min(node_boot_time_seconds)",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "-",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "state-timeline",
+      "id": 8,
+      "title": "Patch state per node",
+      "description": "One lane per node. A healthy Sunday looks like: yellow (pending) -> orange (kured cordoned and is draining) -> red (rebooting) -> orange briefly -> green, one node at a time. Orange that lasts more than ~15m is a stuck drain; yellow that survives a Sunday window is a stall.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (node) (\n    max by (node) (kube_node_status_condition{condition=\"Ready\", status=\"true\"} == 0) * 0 + 3\n  or max by (node) (kube_node_spec_unschedulable == 1) * 0 + 2\n  or max by (node) (kured_reboot_required)\n)",
+          "refId": "A",
+          "legendFormat": "{{node}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "interval": "1m"
+        }
+      ],
+      "options": {
+        "mergeValues": true,
+        "showValue": "never",
+        "alignValue": "left",
+        "rowHeight": 0.8,
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Up to date",
+                  "color": "green",
+                  "index": 0
+                },
+                "1": {
+                  "text": "Reboot pending",
+                  "color": "yellow",
+                  "index": 1
+                },
+                "2": {
+                  "text": "Cordoned / draining",
+                  "color": "orange",
+                  "index": 2
+                },
+                "3": {
+                  "text": "Down (rebooting)",
+                  "color": "red",
+                  "index": 3
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "lineWidth": 0,
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "Nodes",
+      "id": 9,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "id": 10,
+      "title": "Node patch status",
+      "description": "Current state of every node. Click a kernel version to open that Ubuntu kernel's changelog on Launchpad. Microcode is blank until node-exporter's cpu.info collector has been scraped.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (node) (kured_reboot_required)",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (node, release, pkg_version) (label_replace(label_replace(node_uname_info, \"node\", \"$1\", \"nodename\", \"(.*)\"), \"pkg_version\", \"$1-$2.$2\", \"release\", \"(\\\\d+\\\\.\\\\d+\\\\.\\\\d+)-(\\\\d+)-.*\"))",
+          "refId": "B",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (node) (label_replace(node_boot_time_seconds * on (instance) group_left (nodename) max by (instance, nodename) (node_uname_info), \"node\", \"$1\", \"nodename\", \"(.*)\")) * 1000",
+          "refId": "C",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (node) (kube_node_spec_unschedulable)",
+          "refId": "D",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by (node, microcode) (label_replace(max by (instance, microcode) (node_cpu_info) * on (instance) group_left (nodename) max by (instance, nodename) (node_uname_info), \"node\", \"$1\", \"nodename\", \"(.*)\"))",
+          "refId": "E",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "node",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true,
+              "Time 4": true,
+              "Time 5": true,
+              "Value #B": true,
+              "Value #E": true,
+              "pkg_version": true
+            },
+            "indexByName": {
+              "node": 0,
+              "Value #A": 1,
+              "release": 2,
+              "microcode": 3,
+              "Value #C": 4,
+              "Value #D": 5
+            },
+            "renameByName": {
+              "node": "Node",
+              "Value #A": "Status",
+              "release": "Running kernel",
+              "microcode": "Microcode",
+              "Value #C": "Last reboot",
+              "Value #D": "Schedulable"
+            }
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "Node",
+            "desc": false
+          }
+        ],
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "fields": ""
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Status"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "Up to date",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "Reboot pending",
+                        "color": "yellow",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Running kernel"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Ubuntu changelog for linux ${__data.fields.pkg_version}",
+                    "url": "https://launchpad.net/ubuntu/+source/linux/${__data.fields.pkg_version}",
+                    "targetBlank": true
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Last reboot"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsLocal"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Schedulable"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "Yes",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "Cordoned",
+                        "color": "orange",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "row",
+      "title": "What was updated",
+      "id": 11,
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "id": 12,
+      "title": "Kernel updates applied (reboot history)",
+      "description": "Every reboot that changed a node's running kernel, which is what kured reboots for. Click the new kernel to read its Ubuntu changelog (which lists the CVEs fixed), or the time to zoom the dashboard to that reboot. History is limited by Prometheus retention (10d).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "interval": "5m",
+      "maxDataPoints": 5000,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "label_replace((node_boot_time_seconds * 1000) * on (instance) group_left (nodename, release, version) (max by (instance, nodename, release, version) (node_uname_info) unless on (instance, release) max_over_time(node_uname_info[2h] offset 30m)) * on (instance) group_left (previous_release) topk by (instance) (1, label_replace(max by (instance, release) (max_over_time(node_uname_info[2h] offset 30m)) unless on (instance, release) node_uname_info, \"previous_release\", \"$1\", \"release\", \"(.*)\")), \"pkg_version\", \"$1-$2.$2\", \"release\", \"(\\\\d+\\\\.\\\\d+\\\\.\\\\d+)-(\\\\d+)-.*\")",
+          "refId": "A",
+          "legendFormat": "",
+          "range": true,
+          "instant": false,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "nodename": {
+                "operation": "groupby",
+                "aggregations": []
+              },
+              "previous_release": {
+                "operation": "groupby",
+                "aggregations": []
+              },
+              "release": {
+                "operation": "groupby",
+                "aggregations": []
+              },
+              "pkg_version": {
+                "operation": "groupby",
+                "aggregations": []
+              },
+              "version": {
+                "operation": "groupby",
+                "aggregations": []
+              },
+              "Value": {
+                "operation": "groupby",
+                "aggregations": []
+              },
+              "Time": {
+                "operation": "aggregate",
+                "aggregations": [
+                  "min"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time (min)": true,
+              "pkg_version": true
+            },
+            "indexByName": {
+              "Value": 0,
+              "nodename": 1,
+              "previous_release": 2,
+              "release": 3,
+              "version": 4
+            },
+            "renameByName": {
+              "Value": "Rebooted",
+              "nodename": "Node",
+              "previous_release": "Kernel before",
+              "release": "Kernel after",
+              "version": "New kernel build"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Rebooted",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "fields": ""
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "noValue": "No kernel updates in this time range",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Rebooted"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsLocal"
+              },
+              {
+                "id": "custom.width",
+                "value": 190
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Zoom to this reboot",
+                    "url": "/d/kured-patching/kured-patching?time=${__value.raw}&time.window=7200000"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Node"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Kernel after"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              },
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Ubuntu changelog for linux ${__data.fields.pkg_version}",
+                    "url": "https://launchpad.net/ubuntu/+source/linux/${__data.fields.pkg_version}",
+                    "targetBlank": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "table",
+      "id": 13,
+      "title": "Alerts affecting kured now",
+      "description": "Firing or pending alerts that either block kured (its allow-list) or report kured itself failing. Empty is the healthy state.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "ALERTS{alertname=~\"LonghornVolumeFaulted|LonghornVolumeReadOnly|EtcdQuorumLost|KuredBlockLonghornRebuilding|KuredBlockUnexpectedNodeDown|KuredRebootPendingTooLong|KuredNodeStuckCordoned|KuredMetricsMissing|KuredDaemonSetDegraded|KuredDrainStuck\"}",
+          "refId": "A",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "container": true,
+              "endpoint": true,
+              "instance": true,
+              "job": true,
+              "pod": true,
+              "service": true,
+              "prometheus": true
+            },
+            "indexByName": {
+              "alertname": 0,
+              "alertstate": 1,
+              "severity": 2,
+              "node": 3
+            },
+            "renameByName": {
+              "alertname": "Alert",
+              "alertstate": "State",
+              "severity": "Severity",
+              "node": "Node"
+            }
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "fields": ""
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "cellOptions": {
+              "type": "auto"
+            }
+          },
+          "noValue": "Nothing is blocking or alerting",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "State"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "firing": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "pending": {
+                        "color": "yellow",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "row",
+      "title": "Runbook",
+      "id": 15,
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 36
+      },
+      "panels": [
+        {
+          "type": "text",
+          "id": 14,
+          "title": "How kured patching works here",
+          "gridPos": {
+            "h": 17,
+            "w": 24,
+            "x": 0,
+            "y": 37
+          },
+          "options": {
+            "mode": "markdown",
+            "content": "**Schedule.** unattended-upgrades installs security updates daily at 01:30. kured reboots only on **Sunday 02:00-06:00 (Asia/Singapore)**, one node at a time, and only nodes whose running kernel or CPU microcode is out of date. Expect ~15 minutes per node.\n\n**Annotations** (toggle them at the top of the dashboard; hover a marker for details):\n- **Kernel update** (green): the node came back on a new kernel. Shows before -> after and a changelog link.\n- **Microcode update** (purple): the node came back with new CPU microcode.\n- **Reboot, nothing updated** (red): a reboot with no kernel or microcode change: a power cut, crash or manual reboot.\n- **Reboot became required** (yellow): a new kernel was installed and is waiting for Sunday.\n- **Cordoned** (orange): kured holds the lock and is draining that node.\n\n**If a node is stuck orange (cordoned):** the drain cannot evict a pod. Find it and check for PDBs with 0 disruptions allowed:\n```\nkubectl -n kube-system logs -l app.kubernetes.io/name=kured --since=1h | grep -E \"Draining|evict|Unable\"\nkubectl get pdb -A -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,ALLOWED:.status.disruptionsAllowed\n```\n\n**Who holds the reboot lock** (lockTtl is 0, so it never expires on its own):\n```\nkubectl -n kube-system get ds kured -o jsonpath='{.metadata.annotations.weave\\.works/kured-node-lock}'\n```\nOnly once that node is back and Ready, clear it by hand: `kubectl -n kube-system annotate ds kured weave.works/kured-node-lock-`\n\n**Exactly what changed on a node** (all packages, not just the kernel): `grep -A20 \"$(date +%F)\" /var/log/apt/history.log` or `journalctl -u apt-daily-upgrade --since -7d`.\n\nFull background: `apps/kured/values.yaml`.\n",
+            "code": {
+              "language": "shell",
+              "showLineNumbers": false,
+              "showMiniMap": false
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": [
+    "homelab",
+    "kured",
+    "patching"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "kured: Node Patching",
+  "uid": "kured-patching",
+  "version": 1,
+  "weekStart": ""
+}

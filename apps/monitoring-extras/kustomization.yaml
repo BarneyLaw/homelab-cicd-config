@@ -56,6 +56,12 @@ configMapGenerator:
     options:
       labels:
         grafana_dashboard: "1"
+  - name: grafana-dashboard-kured
+    files:
+      - dashboards/kured.json
+    options:
+      labels:
+        grafana_dashboard: "1"
 
         
 generatorOptions:

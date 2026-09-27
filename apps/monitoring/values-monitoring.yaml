@@ -3,6 +3,12 @@ prometheus-node-exporter:
   - --collector.hwmon
   - --collector.thermal_zone
   - --collector.rapl
+  # node_cpu_info{microcode=...}. The kured sentinel reboots for obsolete CPU
+  # microcode as well as for a new kernel, and this is the only place the
+  # running microcode revision is visible: the kured dashboard
+  # (monitoring-extras/dashboards/kured.json) annotates microcode changes from
+  # it. One series per logical CPU; flags are not included, so it stays small.
+  - --collector.cpu.info
   securityContext:
     runAsNonRoot: false
     runAsUser: 0
