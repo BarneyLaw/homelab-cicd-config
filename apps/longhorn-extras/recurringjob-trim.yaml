@@ -1,0 +1,43 @@
+# Daily fstrim of every attached Longhorn volume, so space the filesystem has
+# freed is handed back to Longhorn.
+#
+# WHY (found 2026-10-18 via LonghornVolumeSpaceWarning on the Prometheus PVC)
+#   Longhorn volumes are sparse files that only ever grow: a block the
+#   filesystem deletes stays allocated until it is discarded. Prometheus rewrites
+#   its TSDB on every compaction, so its 40Gi volume reached 47.7 GB actual size
+#   (111%) while holding 10.2 GB of live data. On top of that, every replica
+#   rebuild (i.e. every kured reboot) leaves a system snapshot directly under the
+#   volume head. auto-cleanup marks it removed but cannot coalesce it, so it pins
+#   whatever it held. That snapshot alone was 40.4 GB.
+#
+#   A manual trim with snapshot-chain unmap took it from 47.7 GB to 13.1 GB with
+#   no data loss. This job makes that permanent. It depends on
+#   removeSnapshotsDuringFilesystemTrim in ../longhorn/values-longhorn.yaml;
+#   without it the trim stops at the snapshot and frees almost nothing.
+#
+# SAFETY
+#   Trim only discards blocks the filesystem itself reports as unused, so it
+#   cannot touch live data. The snapshot setting only affects system snapshots.
+#   There are no user snapshots or recurring backups on this cluster. If you ever
+#   add snapshot-based recurring jobs, revisit removeSnapshotsDuringFilesystemTrim,
+#   because it lets a trim discard data in the latest snapshot.
+#
+# SCHEDULE
+#   CronJob schedules run in UTC (the controller-manager's zone). 23:00 UTC is
+#   07:00 SGT: after kured's Sunday 02:00-06:00 SGT window, so it frees that
+#   morning's rebuild snapshots without competing with drains.
+#
+# `default` group = every volume with no recurring-job labels, i.e. all of them.
+# Detached volumes are skipped (fstrim needs a mounted filesystem).
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: filesystem-trim-daily
+  namespace: longhorn-system
+spec:
+  task: filesystem-trim
+  cron: "0 23 * * *"
+  groups:
+    - default
+  concurrency: 1
+  retain: 0

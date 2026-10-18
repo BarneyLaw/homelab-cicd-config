@@ -5,7 +5,17 @@
 # setting defaultSettings/defaultDiskSelector in this file would fight the
 # live node config on every sync.
 #
-# The only thing this file turns on is the chart's built-in ServiceMonitor.
+# Individual defaultSettings keys are safe: the chart renders a key only when it
+# is non-null, so setting one does not pull in the rest. The only thing set here
+# is what the daily trim job needs.
+defaultSettings:
+  # Lets the filesystem-trim job in ../longhorn-extras/recurringjob-trim.yaml
+  # discard blocks held by the removed system snapshot that each replica rebuild
+  # leaves under the volume head. Without this, a trim stops at that snapshot,
+  # and Prometheus' volume grew to 111% of its size while holding 25% data.
+  # See that file for the full story and the safety note.
+  removeSnapshotsDuringFilesystemTrim: true
+
 metrics:
   serviceMonitor:
     enabled: true
