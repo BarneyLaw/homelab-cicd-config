@@ -21,7 +21,7 @@ generatorOptions:
 images:
 - name: ghcr.io/barneylaw/portfolio-site
   newName: ghcr.io/barneylaw/portfolio-site
-  newTag: eb52024
+  newTag: a78ea61
 - name: ghcr.io/home-compute-cluster/portfolio-backend
   newName: ghcr.io/home-compute-cluster/portfolio-backend
   newTag: 9363f3e
