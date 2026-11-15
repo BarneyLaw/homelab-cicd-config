@@ -2,7 +2,7 @@
   "schema_version": 1,
   "mode": "full",
   "source": "portfolio-site",
-  "revision": "eb520247e9c34dff841b3f3326e8227ed9c10376",
+  "revision": "a78ea61c291814496bff3c791818f1d1df8134cb",
   "items": [
     {
       "slug": "building-a-homelab",
@@ -89,6 +89,12 @@
       "comments_enabled": true
     },
     {
+      "slug": "lag-app",
+      "kind": "project",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
       "slug": "ma1521",
       "kind": "review",
       "status": "published",
@@ -133,6 +139,12 @@
     {
       "slug": "st2334",
       "kind": "review",
+      "status": "published",
+      "comments_enabled": true
+    },
+    {
+      "slug": "stele-pull",
+      "kind": "project",
       "status": "published",
       "comments_enabled": true
     },
