@@ -1,0 +1,8 @@
+# apps/cloudflare-ddns/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cloudflare-ddns
+resources:
+  - namespace.yaml
+  - sealed-secret.yaml
+  - deployment.yaml

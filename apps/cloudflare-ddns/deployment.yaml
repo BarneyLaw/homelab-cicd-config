@@ -1,0 +1,50 @@
+# apps/cloudflare-ddns/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflare-ddns
+  namespace: cloudflare-ddns
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate          # one writer at a time
+  selector:
+    matchLabels:
+      app: cloudflare-ddns
+  template:
+    metadata:
+      labels:
+        app: cloudflare-ddns
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: ddns
+          image: favonia/cloudflare-ddns:1.17.0   # pin; let Renovate bump
+          env:
+            - name: CLOUDFLARE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflare-ddns-token
+                  key: token
+            - name: DOMAINS
+              value: wg.packetcraft.dev
+            - name: PROXIED
+              value: "false"       # must be grey-cloud: Cloudflare's proxy can't carry UDP WireGuard
+            - name: TTL
+              value: "60"
+            - name: UPDATE_CRON
+              value: "@every 5m"
+            # - name: SHOUTRRR     # point at the same channel Alertmanager uses
+            #   valueFrom: {secretKeyRef: {name: cloudflare-ddns-token, key: shoutrrr}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: {cpu: 5m, memory: 16Mi}
+            limits: {memory: 64Mi}
